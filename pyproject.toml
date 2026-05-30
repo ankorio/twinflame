@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apkdiff"
+version = "0.1.0"
+description = "DEX-level Android APK class-diffing engine (SimHash + LSH + abstract-opcode comparison)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "apkdiff contributors" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Security",
+    "Topic :: Software Development :: Disassemblers",
+]
+dependencies = [
+    "androguard>=4.1",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "hypothesis>=6",
+]
+
+[project.scripts]
+apkdiff = "apkdiff.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ankorio/twinflame"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+apkdiff = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+filterwarnings = [
+    "ignore::DeprecationWarning:androguard.*",
+]
