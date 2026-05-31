@@ -35,7 +35,30 @@ def normalize(apk_in: Path, *, out_dir: Path | None = None) -> Path:
         out_dir.mkdir(parents=True, exist_ok=True)
 
     config_path = out_dir / "redex-config.json"
-    config_path.write_text(json.dumps({"redex": {"passes": list(REQUIRED_PASSES)}}))
+    # Three safety gates have to be disabled for apkdiff's normalization use:
+    #
+    # * `ignore_no_keep_rules: true` — Redex aborts when no ProGuard keep
+    #   rules are supplied. Our two passes (LocalDcePass + RegAllocPass) are
+    #   method-local and don't depend on reachability, and we're given
+    #   pre-built APKs without the original ProGuard config.
+    #
+    # * `ir_type_checker.run_on_input: false` plus
+    #   `ir_type_checker.run_after_each_pass: false` and
+    #   `ir_type_checker.check_classes: false` — Redex's type/class checkers
+    #   refuse bytecode that's locally type-unsound, which is common in
+    #   Proguard-output code (e.g. an `Object` passed where `CharSequence`
+    #   is declared). The defaults run all three checks (input + after each
+    #   pass + class-shape). Our passes don't rely on type soundness, and
+    #   Redex's own error message recommends `run_on_input=false`.
+    config_path.write_text(json.dumps({
+        "redex": {"passes": list(REQUIRED_PASSES)},
+        "ignore_no_keep_rules": True,
+        "ir_type_checker": {
+            "run_on_input": False,
+            "run_after_each_pass": False,
+            "check_classes": False,
+        },
+    }))
 
     out_apk = out_dir / (apk_in.stem + ".normalized.apk")
     cmd = ["redex", "-c", str(config_path), "-o", str(out_apk), str(apk_in)]

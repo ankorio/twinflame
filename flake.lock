@@ -34,10 +34,28 @@
         "type": "github"
       }
     },
+    "redex-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779992045,
+        "narHash": "sha256-ciFWEI2/0GtA2spxWpK8s1avisZfmhTBB5KE9MHg3jw=",
+        "owner": "facebook",
+        "repo": "redex",
+        "rev": "07363b3dd226053355dd6a038d491f43ca367593",
+        "type": "github"
+      },
+      "original": {
+        "owner": "facebook",
+        "ref": "main",
+        "repo": "redex",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "redex-src": "redex-src"
       }
     },
     "systems": {

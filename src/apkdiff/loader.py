@@ -48,9 +48,15 @@ def _wrap_class(cdi) -> Class:
     descriptor = cdi.get_name()
     package, name = _split_descriptor(descriptor)
     access = AccessFlag(cdi.get_access_flags() & 0x3FFFF)
-    source_file = cdi.get_source_ext() if cdi.get_source_file_idx() != -1 else None
-    if source_file == "":
-        source_file = None
+    # `cdi.get_source_ext()` routes through `CM.decompiler_ob` which is
+    # often `None` on a freshly-parsed DEX. Read the string table directly.
+    source_file = None
+    src_idx = cdi.get_source_file_idx()
+    if src_idx not in (-1, 0xFFFFFFFF):
+        try:
+            source_file = cdi.CM.get_string(src_idx) or None
+        except Exception:
+            source_file = None
 
     methods = tuple(_wrap_method(m) for m in cdi.get_methods())
     fields = tuple(_wrap_field(f) for f in cdi.get_fields())
