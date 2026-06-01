@@ -32,7 +32,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-inner", action="store_true", help="skip inner classes (name contains '$')")
     p.add_argument("--skip-external", action="store_true", help="skip external/framework classes (no bytecode)")
     p.add_argument("--find-obfuscated", action="store_true", help="route obfuscated-looking packages into a single fallback pool")
+    p.add_argument("--no-anchors", dest="anchoring", action="store_false", default=True, help="disable Stage-B anchoring (string/framework-call seed matches)")
+    p.add_argument("--progress", action="store_true", help="print per-pool / per-batch diff progress to stderr")
     p.add_argument("--json", metavar="OUT", type=Path, help="also write JSON report to this path")
+    p.add_argument("--deobfuscation-map", metavar="OUT", type=Path, help="write a ProGuard mapping.txt that renames apk2's obfuscated classes using names recovered from matched apk1 classes (cross-version propagation)")
+    p.add_argument("--map-min-confidence", type=float, default=0.8, help="minimum match similarity to include a class in the deobfuscation map (anchored matches always included)")
     p.add_argument("--jobs", "-j", type=int, default=max(1, os.cpu_count() or 1), help="parallel workers (hard cap)")
     return p
 
@@ -65,6 +69,8 @@ def main(argv: list[str] | None = None) -> int:
         "buckets": args.buckets,
         "jobs": args.jobs,
         "cluster": not args.no_cluster,
+        "anchoring": args.anchoring,
+        "progress": args.progress,
     }
 
     t_diff_start = time.perf_counter()
@@ -75,6 +81,15 @@ def main(argv: list[str] | None = None) -> int:
     print(report.render_human(matches))
     if args.json:
         args.json.write_text(report.render_json(matches))
+    if args.deobfuscation_map:
+        from . import deobf
+
+        entries = deobf.build_mapping(matches, min_confidence=args.map_min_confidence)
+        args.deobfuscation_map.write_text(deobf.render_mapping(entries))
+        print(
+            f"deobfuscation-map: {len(entries)} classes -> {args.deobfuscation_map}",
+            file=sys.stderr,
+        )
     return 0
 
 

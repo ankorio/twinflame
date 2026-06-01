@@ -33,6 +33,7 @@ class MethodSpec:
     xref_count: int = 0
     bytecode: bytes = b"\x0e"  # return-void
     instr_count: int = 1
+    calls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ def make_method(spec: MethodSpec) -> Method:
         bytecode=bc,
         instr_count=spec.instr_count if spec.instr_count else len(bc),
         opcode_xor=opcode_xor,
+        calls=spec.calls,
     )
 
 
@@ -204,6 +206,7 @@ def mutate_method_bytecode(c: Class, method_name: str, new_bytecode: bytes) -> C
                     bytecode=new_bytecode,
                     instr_count=len(new_bytecode),
                     opcode_xor=opcode_xor,
+                    calls=m.calls,
                 )
             )
         else:

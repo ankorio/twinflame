@@ -31,20 +31,108 @@ def load(path: str | Path, *, redex_normalize: bool = False) -> App:
 def _merge_dexes(apk) -> list[Class]:
     from androguard.core.dex import DEX
 
+    dexes = [DEX(b) for b in apk.get_all_dex()]
+    # Build a whole-app cross-reference graph once. It gives us, per method,
+    # both its call targets (B1 anchors) and its incoming-call count (xref),
+    # plus the string→class map (B2 anchors). create_xref() is the expensive
+    # step; it's acceptable for a POC and degrades gracefully if unavailable.
+    analysis = _build_analysis(dexes)
+    strings_by_class = _strings_by_class(analysis)
+
     seen_descriptors: set[str] = set()
     out: list[Class] = []
-    for dex_bytes in apk.get_all_dex():
-        dex = DEX(dex_bytes)
+    for dex in dexes:
         for cdi in dex.get_classes():
             descriptor = cdi.get_name()
             if descriptor in seen_descriptors:
                 continue
             seen_descriptors.add(descriptor)
-            out.append(_wrap_class(cdi))
+            out.append(_wrap_class(cdi, analysis, strings_by_class.get(descriptor, ())))
     return out
 
 
-def _wrap_class(cdi) -> Class:
+def _build_analysis(dexes):
+    """Construct an androguard Analysis with xrefs, or None on any failure."""
+    try:
+        from androguard.core.analysis.analysis import Analysis
+
+        analysis = Analysis()
+        for dex in dexes:
+            analysis.add(dex)
+        analysis.create_xref()
+        return analysis
+    except Exception:
+        # Version skew or pathological input: fall back to no enrichment.
+        # calls/strings stay empty and xref_count stays 0 (pre-M1.2 behavior).
+        return None
+
+
+def _strings_by_class(analysis) -> dict[str, tuple[str, ...]]:
+    """Map class descriptor -> the string constants referenced from it."""
+    if analysis is None:
+        return {}
+    acc: dict[str, set[str]] = {}
+    try:
+        strings = analysis.get_strings()
+    except Exception:
+        return {}
+    for sa in strings:
+        try:
+            value = sa.get_value()
+        except Exception:
+            continue
+        if value is None:
+            continue
+        for ref in _safe_xref_iter(sa, "get_xref_from"):
+            cls_desc = _ref_class_descriptor(ref)
+            if cls_desc:
+                acc.setdefault(cls_desc, set()).add(value)
+    return {k: tuple(sorted(v)) for k, v in acc.items()}
+
+
+def _safe_xref_iter(obj, attr):
+    """Yield xref entries from an androguard analysis object, tolerantly."""
+    fn = getattr(obj, attr, None)
+    if fn is None:
+        return
+    try:
+        entries = fn()
+    except Exception:
+        return
+    for entry in entries or ():
+        yield entry
+
+
+def _ref_class_descriptor(ref) -> str | None:
+    """Pull the class descriptor out of an xref tuple/object, defensively.
+
+    androguard xref entries are typically (ClassAnalysis, MethodAnalysis,
+    offset) tuples, but exact shapes vary by version — so we probe.
+    """
+    candidate = ref[0] if isinstance(ref, (tuple, list)) and ref else ref
+    for getter in ("get_vm_class", "get_class"):
+        fn = getattr(candidate, getter, None)
+        if fn is not None:
+            try:
+                cls = fn()
+                name = cls.get_name() if hasattr(cls, "get_name") else None
+                if name:
+                    return name
+            except Exception:
+                pass
+    # Some shapes expose the class name directly on the analysis object.
+    for getter in ("get_name", "class_name"):
+        fn = getattr(candidate, getter, None)
+        try:
+            name = fn() if callable(fn) else fn
+        except Exception:
+            name = None
+        if isinstance(name, str) and name.startswith("L"):
+            return name
+    return None
+
+
+def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
     descriptor = cdi.get_name()
     package, name = _split_descriptor(descriptor)
     access = AccessFlag(cdi.get_access_flags() & 0x3FFFF)
@@ -58,7 +146,7 @@ def _wrap_class(cdi) -> Class:
         except Exception:
             source_file = None
 
-    methods = tuple(_wrap_method(m) for m in cdi.get_methods())
+    methods = tuple(_wrap_method(m, analysis) for m in cdi.get_methods())
     fields = tuple(_wrap_field(f) for f in cdi.get_fields())
 
     is_inner = "$" in name
@@ -76,11 +164,11 @@ def _wrap_class(cdi) -> Class:
         is_external=is_external,
         methods=methods,
         fields=fields,
-        strings=(),  # not collected in v1; see _hot.py for the seam
+        strings=strings,
     )
 
 
-def _wrap_method(em) -> Method:
+def _wrap_method(em, analysis=None) -> Method:
     name = em.get_name()
     descriptor = em.get_descriptor()  # e.g. "(II)V"
     access = AccessFlag(em.get_access_flags() & 0x3FFFF)
@@ -103,17 +191,87 @@ def _wrap_method(em) -> Method:
             opcodes = bytearray()
             opcode_xor = 0
 
+    calls, xref_count = _method_calls_and_xrefs(em, analysis)
+
     return Method(
         name=name,
         descriptor=descriptor,
         access=access,
         arg_count=arg_count,
         return_type=return_type,
-        xref_count=0,
+        xref_count=xref_count,
         bytecode=bytes(opcodes),
         instr_count=len(opcodes),
         opcode_xor=opcode_xor,
+        calls=calls,
     )
+
+
+def _method_calls_and_xrefs(em, analysis) -> tuple[tuple[str, ...], int]:
+    """Return (call-target refs, incoming-call count) for a method.
+
+    Both come from the androguard Analysis cross-reference graph. Defensive
+    throughout: any version-shape mismatch yields ((), 0) rather than failing
+    the whole load.
+    """
+    if analysis is None:
+        return (), 0
+    mca = None
+    try:
+        mca = analysis.get_method(em)
+    except Exception:
+        mca = None
+    if mca is None:
+        return (), 0
+
+    calls: list[str] = []
+    for entry in _safe_xref_iter(mca, "get_xref_to"):
+        ref = _callee_ref(entry)
+        if ref:
+            calls.append(ref)
+
+    xref_count = sum(1 for _ in _safe_xref_iter(mca, "get_xref_from"))
+    return tuple(calls), xref_count
+
+
+def _callee_ref(entry) -> str | None:
+    """Build "Lcls;->name(desc)ret" for a callee in an xref_to entry.
+
+    An xref_to entry is (ClassAnalysis, MethodAnalysis, offset); the callee is
+    the middle element. androguard's MethodAnalysis exposes the name/class/
+    descriptor as both properties and `get_*` accessors depending on version,
+    so we probe both forms.
+    """
+    if isinstance(entry, (tuple, list)):
+        target = entry[1] if len(entry) >= 2 else (entry[0] if entry else None)
+    else:
+        target = entry
+    if target is None:
+        return None
+    name = _read_attr(target, "name", "get_name")
+    if not name:
+        return None
+    cls = _read_attr(target, "class_name", "get_class_name")
+    desc = _read_attr(target, "descriptor", "get_descriptor")
+    return f"{cls}->{name}{desc}"
+
+
+def _read_attr(obj, *names) -> str:
+    """Read the first attribute that resolves to a non-empty string.
+
+    Each name may be a plain attribute/property or a zero-arg method.
+    """
+    for n in names:
+        val = getattr(obj, n, None)
+        if val is None:
+            continue
+        try:
+            val = val() if callable(val) else val
+        except Exception:
+            continue
+        if isinstance(val, str) and val:
+            return val
+    return ""
 
 
 def _wrap_field(ef) -> Field:

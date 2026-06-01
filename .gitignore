@@ -13,3 +13,6 @@ result
 result-*
 .direnv/
 .envrc.local
+*.apk
+plans/
+.venv/
