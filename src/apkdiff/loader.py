@@ -153,6 +153,12 @@ def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
     is_synthetic = bool(access & AccessFlag.SYNTHETIC)
     is_external = all(m.bytecode == b"" for m in methods) if methods else True
 
+    superclass = cdi.get_superclassname() or None
+    try:
+        interfaces = tuple(cdi.get_interfaces())
+    except Exception:
+        interfaces = ()
+
     return Class(
         descriptor=descriptor,
         package=package,
@@ -165,6 +171,8 @@ def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
         methods=methods,
         fields=fields,
         strings=strings,
+        superclass=superclass,
+        interfaces=interfaces,
     )
 
 

@@ -66,14 +66,25 @@ def diff(
 
     jobs = max(1, opts.jobs or 1)
     if jobs > 1 and len(active) > 1:
-        return _diff_parallel(ordered, opts, threshold, jobs)
+        matches = _diff_parallel(ordered, opts, threshold, jobs)
+    else:
+        matches = []
+        for i, pool in enumerate(ordered, 1):
+            if opts.progress and pool.lhs and pool.rhs:
+                _log(f"  [pool {i}/{len(ordered)}] {pool.key or '<root>'}: "
+                     f"{len(pool.lhs)}x{len(pool.rhs)}")
+            matches.extend(_diff_pool(pool, opts, threshold))
 
-    matches: list[Match] = []
-    for i, pool in enumerate(ordered, 1):
-        if opts.progress and pool.lhs and pool.rhs:
-            _log(f"  [pool {i}/{len(ordered)}] {pool.key or '<root>'}: "
-                 f"{len(pool.lhs)}x{len(pool.rhs)}")
-        matches.extend(_diff_pool(pool, opts, threshold))
+    if opts.propagation:
+        from .propagate import propagate_matches
+
+        if opts.progress:
+            before = sum(1 for m in matches if m.is_paired)
+        matches = propagate_matches(matches, threshold=threshold)
+        if opts.progress:
+            after = sum(1 for m in matches if m.is_paired)
+            _log(f"  propagation: +{after - before} matches (type-graph cascade)")
+
     return matches
 
 

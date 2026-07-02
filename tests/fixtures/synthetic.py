@@ -47,6 +47,8 @@ class ClassSpec:
     methods: tuple[MethodSpec, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     strings: tuple[str, ...] = ()
+    superclass: str | None = None
+    interfaces: tuple[str, ...] = ()
 
 
 def _descriptor_to_package_name(desc: str) -> tuple[str, str]:
@@ -94,6 +96,8 @@ def make_class(spec: ClassSpec) -> Class:
         methods=tuple(make_method(m) for m in spec.methods),
         fields=tuple(make_field(f) for f in spec.fields),
         strings=spec.strings,
+        superclass=spec.superclass,
+        interfaces=spec.interfaces,
     )
 
 
@@ -223,4 +227,6 @@ def mutate_method_bytecode(c: Class, method_name: str, new_bytecode: bytes) -> C
         methods=tuple(new_methods),
         fields=c.fields,
         strings=c.strings,
+        superclass=c.superclass,
+        interfaces=c.interfaces,
     )

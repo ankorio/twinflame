@@ -72,6 +72,11 @@ class Class:
     methods: tuple[Method, ...]
     fields: tuple[Field, ...]
     strings: tuple[str, ...]
+    # Type-graph edges (M1.3 match propagation): superclass/interface
+    # descriptors, e.g. "Ljava/lang/Object;". Populated by the loader; empty
+    # for synthetic/test classes that don't set them.
+    superclass: Optional[str] = None
+    interfaces: tuple[str, ...] = ()
 
     @property
     def info(self) -> str:
@@ -194,6 +199,7 @@ class DiffOptions:
     use_strings: bool = False
     cluster: bool = True
     anchoring: bool = True
+    propagation: bool = True
     progress: bool = False
 
     @classmethod

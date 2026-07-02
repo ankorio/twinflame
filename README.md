@@ -160,6 +160,16 @@ jadx --mappings-path app-new.map -Prename-mappings.format=PROGUARD_FILE -Prename
 - **Heavily Proguard'd inputs.** Add `--find-obfuscated` so single-letter package names (`a.b.c`) collapse into a fallback pool rather than failing to pair with their clear-text counterparts.
 - **Deobfuscating a stripped build.** Diff it against an older build that kept `SourceFile`, add `--find-obfuscated --deobfuscation-map out.map`, then load `out.map` in JADX.
 
+### Evaluation harness (`eval/`, plan M3.2)
+
+Grades apkdiff's own class matches against real ground truth instead of eyeballing them. Build an OSS Android app **twice** — R8 off, then R8 on at full optimization — the `mapping.txt` R8 writes for the R8-on build is a free, perfect oracle for the renaming-only case (directly grades M1.1 + M1.2; inlining/outlining is a future difficulty-graded slice per M3.1).
+
+```sh
+python -m eval.cli app-r8-off.apk app-r8-on.apk app-r8-on/mapping.txt --package com.vendor.app
+```
+
+Prints true/false positive & negative class-match counts plus precision/recall/F1. `eval/mapping.py` parses the ProGuard-format oracle (same format `deobf.py` emits); `eval/score.py` exposes `score_class_matches(matches, ground_truth) -> ScoreResult` for use as a library, independent of the CLI. Kept out of the `src/apkdiff` package on purpose — it's tooling to grade the engine, not part of it.
+
 ## Layout
 
 | Module                                               | Role                                                                 |

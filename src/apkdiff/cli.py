@@ -33,6 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--skip-external", action="store_true", help="skip external/framework classes (no bytecode)")
     p.add_argument("--find-obfuscated", action="store_true", help="route obfuscated-looking packages into a single fallback pool")
     p.add_argument("--no-anchors", dest="anchoring", action="store_false", default=True, help="disable Stage-B anchoring (string/framework-call seed matches)")
+    p.add_argument("--no-propagation", dest="propagation", action="store_false", default=True, help="disable type-graph match propagation (superclass/interfaces/field & method types)")
     p.add_argument("--progress", action="store_true", help="print per-pool / per-batch diff progress to stderr")
     p.add_argument("--json", metavar="OUT", type=Path, help="also write JSON report to this path")
     p.add_argument("--deobfuscation-map", metavar="OUT", type=Path, help="write a ProGuard mapping.txt that renames apk2's obfuscated classes using names recovered from matched apk1 classes (cross-version propagation)")
@@ -70,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
         "jobs": args.jobs,
         "cluster": not args.no_cluster,
         "anchoring": args.anchoring,
+        "propagation": args.propagation,
         "progress": args.progress,
     }
 
