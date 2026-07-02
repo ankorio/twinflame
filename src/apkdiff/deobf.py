@@ -147,6 +147,11 @@ def render_mapping(entries: list[MappingEntry]) -> str:
         "# format: <recovered name> -> <obfuscated name in target APK>:",
         "# package stays obfuscated (source files carry no package); only the",
         "# class simple name is recovered. Low-confidence lines are flagged.",
+        "#",
+        "# JADX: jadx --mappings-path THIS_FILE -Prename-mappings.format=PROGUARD_FILE \\",
+        "#            -Prename-mappings.invert=yes -d OUT_DIR TARGET_APK",
+        "# (invert=yes is required — jadx's PROGUARD_FILE reader expects the",
+        "# opposite direction from standard ProGuard mapping.txt / retrace).",
     ]
     for e in entries:
         if not e.anchored and e.confidence < _TRUSTED:

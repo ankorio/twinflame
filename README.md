@@ -20,7 +20,7 @@ Optional Redex pre-pass strips junk-instruction obfuscation (`LocalDcePass` + `R
 
 ## Installation
 
-apkdiff is distributed as a [Nix flake](https://nixos.wiki/wiki/Flakes). All runtime dependencies — Python, androguard, numpy, Redex (built from source), JADX — are pinned in [flake.lock](flake.lock), so a clean checkout reproduces an identical environment.
+apkdiff is distributed as a [Nix flake](https://nixos.wiki/wiki/Flakes). All runtime dependencies — Python, androguard, numpy, rapidfuzz, Redex (built from source), JADX — are pinned in [flake.lock](flake.lock), so a clean checkout reproduces an identical environment.
 
 **1. Install Nix** (skip if you already have it with flakes enabled):
 
@@ -140,6 +140,15 @@ apkdiff app-old.apk app-new.apk \
     --find-obfuscated --deobfuscation-map app-new.map --map-min-confidence 0.8
 ```
 
+Load into JADX with `-Prename-mappings.invert=yes`:
+
+```sh
+jadx --mappings-path app-new.map -Prename-mappings.format=PROGUARD_FILE -Prename-mappings.invert=yes \
+    -d out_deobf app-new.apk
+```
+
+`invert=yes` is required: our file follows the standard ProGuard convention (`<original> -> <obfuscated>:`, what `retrace` consumes), but jadx's `PROGUARD_FILE` reader treats the left side as the name *currently in the binary* — the opposite. Without the flag it silently renames nothing (no error). Same applies in jadx-gui: check "Invert" alongside the mapping path.
+
 - Recovers the class **simple name** (`ContextCompat.java` → `x6.q` becomes `x6.ContextCompat`); the obfuscated **package** and inner-class structure are kept (source files carry no package).
 - Anchored / exact (`distance == 1.0`) matches are trusted; lower-confidence ones are still emitted but flagged with a `# low-confidence` comment. Tune the floor with `--map-min-confidence`.
 - This is the cross-version superpower over single-APK source-file deobfuscation: it names classes in a build that **stripped** `SourceFile`, using the build that didn't. Method/field name propagation is a planned next step.
@@ -164,7 +173,7 @@ apkdiff app-old.apk app-new.apk \
 | [src/apkdiff/signature.py](src/apkdiff/signature.py) | 128-bit SimHash + LSH bucket index                                   |
 | [src/apkdiff/accurate.py](src/apkdiff/accurate.py)   | Abstract opcodes, method-level + class scoring, greedy 1-to-1 assignment |
 | [src/apkdiff/opcodes.py](src/apkdiff/opcodes.py)     | Dalvik opcode → 13-category lookup table                             |
-| [src/apkdiff/\_hot.py](src/apkdiff/_hot.py)          | Hot loops (popcount, Hamming, Levenshtein) — Rust seam               |
+| [src/apkdiff/\_hot.py](src/apkdiff/_hot.py)          | Hot loops (popcount, Hamming, rapidfuzz-backed Levenshtein)          |
 | [src/apkdiff/deobf.py](src/apkdiff/deobf.py)         | Cross-version deobfuscation: recovered names → ProGuard mapping.txt   |
 | [src/apkdiff/api.py](src/apkdiff/api.py)             | Public `load / filter / diff` entry points                           |
 | [src/apkdiff/cli.py](src/apkdiff/cli.py)             | `apkdiff` console script                                             |

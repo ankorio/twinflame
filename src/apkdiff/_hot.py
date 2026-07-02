@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+from rapidfuzz.distance import Levenshtein as _rf_levenshtein
 
 
 def _popcount8_table() -> np.ndarray:
@@ -33,28 +34,8 @@ def popcount_int(value: int) -> int:
 
 
 def levenshtein_bytes(a: bytes, b: bytes) -> int:
-    if a == b:
-        return 0
-    la, lb = len(a), len(b)
-    if la == 0:
-        return lb
-    if lb == 0:
-        return la
-    # Make `a` the shorter one for memory.
-    if la > lb:
-        a, b = b, a
-        la, lb = lb, la
-    prev = list(range(la + 1))
-    curr = [0] * (la + 1)
-    for j in range(1, lb + 1):
-        curr[0] = j
-        bj = b[j - 1]
-        for i in range(1, la + 1):
-            cost = 0 if a[i - 1] == bj else 1
-            curr[i] = min(
-                curr[i - 1] + 1,
-                prev[i] + 1,
-                prev[i - 1] + cost,
-            )
-        prev, curr = curr, prev
-    return prev[la]
+    # rapidfuzz's Levenshtein is a C++/SIMD bit-parallel (Myers') implementation,
+    # measured at ~27-95x faster than a hand-rolled Rust/PyO3 port and ~860x over
+    # the plain-Python DP this replaced (see LEVENSHTEIN_BENCHMARK_REPORT.md at
+    # the repo root). Equal insert/delete/substitute costs match the old DP.
+    return _rf_levenshtein.distance(a, b)
