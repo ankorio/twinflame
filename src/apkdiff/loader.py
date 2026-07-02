@@ -302,10 +302,15 @@ def _parse_proto(descriptor: str) -> tuple[int, str]:
     if not descriptor.startswith("(") or ")" not in descriptor:
         return 0, "V"
     params, _, ret = descriptor[1:].partition(")")
-    return _count_params(params), ret
+    return _count_params(params), ret.strip()
 
 
 def _count_params(params: str) -> int:
+    # androguard's get_descriptor() separates multi-arg protos with spaces
+    # (its own "pretty" format, e.g. "(Ljava/lang/String; I)I", not the raw
+    # compact JVM descriptor) — strip them so they aren't miscounted as
+    # their own zero-width "argument".
+    params = params.replace(" ", "")
     n = 0
     i = 0
     while i < len(params):
