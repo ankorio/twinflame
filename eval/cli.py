@@ -28,7 +28,7 @@ from pathlib import Path
 
 from apkdiff import api, load
 
-from .mapping import load_class_mapping
+from .mapping import is_synthetic_like, load_class_mapping
 from .score import score_class_matches
 
 
@@ -62,6 +62,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "merges packages that look obfuscated on *both* sides into one shared "
         "bucket, and the donor's package never does)",
     )
+    p.add_argument(
+        "--include-synthetic-like",
+        dest="exclude_synthetic_like",
+        action="store_false",
+        default=True,
+        help="grade against compiler-generated bookkeeping classes too "
+        "(D8 lambda desugaring / API backport shims, e.g. "
+        "'$$ExternalSyntheticLambda...') — excluded by default, since scoring "
+        "against them makes recall reflect noise nobody wants to track by "
+        "name rather than real code (see M3.2's CalculatorM3 diagnosis)",
+    )
+    p.add_argument("--assignment", choices=("greedy", "hungarian", "auto"), default="auto")
     return p
 
 
@@ -77,6 +89,10 @@ def main(argv: list[str] | None = None) -> int:
         ground_truth = {
             orig: obf for orig, obf in ground_truth.items() if _in_package(orig, args.package)
         }
+    if args.exclude_synthetic_like:
+        ground_truth = {
+            orig: obf for orig, obf in ground_truth.items() if not is_synthetic_like(orig)
+        }
 
     donor_app = load(args.donor)
     target_app = load(args.target)
@@ -84,10 +100,17 @@ def main(argv: list[str] | None = None) -> int:
     donor_classes = api.filter(donor_app.classes, condition)
     target_classes = list(target_app.classes)  # unfiltered — see module docstring
 
-    matches = api.diff(donor_classes, target_classes, args.threshold, {"cluster": args.cluster})
+    matches = api.diff(
+        donor_classes, target_classes, args.threshold,
+        {"cluster": args.cluster, "assignment": args.assignment},
+    )
     result = score_class_matches(matches, ground_truth)
 
-    print(f"ground truth: {len(ground_truth)} classes", file=sys.stderr)
+    print(
+        f"ground truth: {len(ground_truth)} classes"
+        f" (synthetic-like excluded: {args.exclude_synthetic_like})",
+        file=sys.stderr,
+    )
     print(f"true positives:  {result.true_positives}")
     print(f"false positives: {result.false_positives}")
     print(f"false negatives: {result.false_negatives}")

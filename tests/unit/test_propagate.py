@@ -1,11 +1,11 @@
-"""Match propagation — type-graph cascade (apkdiff.propagate, M1.3)."""
+"""Match propagation — type-graph cascade + call-site anchor (apkdiff.propagate, M1.3/M1.4)."""
 
 from __future__ import annotations
 
 import synthetic
 
-from apkdiff.model import Match
-from apkdiff.propagate import propagate_matches, referenced_descriptors
+from apkdiff.model import Match, MethodMatch
+from apkdiff.propagate import instantiation_pairs, propagate_matches, referenced_descriptors
 
 
 def _cls(descriptor, *, superclass=None, interfaces=(), fields=(), methods=None):
@@ -20,8 +20,12 @@ def _cls(descriptor, *, superclass=None, interfaces=(), fields=(), methods=None)
     )
 
 
-def _paired(lhs, rhs, distance=1.0):
-    return Match(lhs=lhs, rhs=rhs, distance=distance)
+def _method(name, instantiates=()):
+    return synthetic.make_method(synthetic.MethodSpec(name=name, instantiates=instantiates))
+
+
+def _paired(lhs, rhs, distance=1.0, method_matches=()):
+    return Match(lhs=lhs, rhs=rhs, distance=distance, method_matches=method_matches)
 
 
 def _deleted(lhs):
@@ -172,3 +176,136 @@ def test_no_referenced_candidates_returns_matches_unchanged():
     matches = [_paired(child_l, child_r)]
     out = propagate_matches(matches, threshold=0.8)
     assert out == matches
+
+
+# --- instantiation_pairs (M1.4) -------------------------------------------
+
+
+def test_instantiation_pairs_zips_by_position():
+    caller_l = _method("build", instantiates=("Lx;", "Ly;", "Lz;"))
+    caller_r = _method("build", instantiates=("Lx2;", "Ly2;", "Lz2;"))
+    mm = MethodMatch(lhs=caller_l, rhs=caller_r, score=1.0, status="matched")
+    m = _paired(_cls("Lcaller;"), _cls("Lcaller2;"), method_matches=(mm,))
+    assert instantiation_pairs(m) == [("Lx;", "Lx2;"), ("Ly;", "Ly2;"), ("Lz;", "Lz2;")]
+
+
+def test_instantiation_pairs_truncates_to_shorter_side():
+    caller_l = _method("build", instantiates=("Lx;", "Ly;", "Lz;"))
+    caller_r = _method("build", instantiates=("Lx2;",))  # one instantiation optimized away
+    mm = MethodMatch(lhs=caller_l, rhs=caller_r, score=0.9, status="modified")
+    m = _paired(_cls("Lcaller;"), _cls("Lcaller2;"), method_matches=(mm,))
+    assert instantiation_pairs(m) == [("Lx;", "Lx2;")]
+
+
+def test_instantiation_pairs_skips_added_and_deleted_methods():
+    added = MethodMatch(lhs=None, rhs=_method("a", instantiates=("Lz;",)), score=0.0, status="added")
+    deleted = MethodMatch(lhs=_method("b", instantiates=("Ly;",)), rhs=None, score=0.0, status="deleted")
+    m = _paired(_cls("Lcaller;"), _cls("Lcaller2;"), method_matches=(added, deleted))
+    assert instantiation_pairs(m) == []
+
+
+# --- propagate_matches: call-site anchor (M1.4) ---------------------------
+
+
+def test_propagates_via_matched_callers_instantiation_site():
+    caller_l = _method("build", instantiates=("Lcom/acme/HelperL;",))
+    caller_r = _method("build", instantiates=("Lcom/acme/HelperR;",))
+    mm = MethodMatch(lhs=caller_l, rhs=caller_r, score=1.0, status="matched")
+    caller_match = _paired(_cls("Lcom/acme/CallerL;"), _cls("Lcom/acme/CallerR;"), method_matches=(mm,))
+
+    helper_l = _cls("Lcom/acme/HelperL;")
+    helper_r = _cls("Lcom/acme/HelperR;")
+
+    matches = [caller_match, _deleted(helper_l), _added(helper_r)]
+    out = propagate_matches(matches, threshold=0.8)
+    paired = {(m.lhs.descriptor, m.rhs.descriptor) for m in out if m.is_paired}
+    assert (helper_l.descriptor, helper_r.descriptor) in paired
+    new_match = next(
+        m for m in out if m.is_paired and m.lhs.descriptor == helper_l.descriptor
+    )
+    assert new_match.breakdown.get("call_site_anchored") == 1.0
+
+
+def test_call_site_anchor_uses_a_lower_floor_than_the_structural_threshold():
+    """Regression: the first cut gated call-site-anchored pairs by the same
+    structural `threshold` as open-candidate-search propagation. On the real
+    CalculatorM3 corpus, verified-correct call-site pairs (e.g. a Kotlin
+    Companion object, nearly empty by construction) scored as low as 0.24 —
+    below the default 0.8 threshold, so every one of them was silently
+    rejected. The positional correlation *is* the confidence signal for this
+    mechanism; CALL_SITE_MIN_CONFIDENCE is a much lower sanity floor, not a
+    structural-confidence gate.
+    """
+    caller_l = _method("build", instantiates=("Lcom/acme/HelperL;",))
+    caller_r = _method("build", instantiates=("Lcom/acme/HelperR;",))
+    mm = MethodMatch(lhs=caller_l, rhs=caller_r, score=1.0, status="matched")
+    caller_match = _paired(_cls("Lcom/acme/CallerL;"), _cls("Lcom/acme/CallerR;"), method_matches=(mm,))
+
+    # Structurally dissimilar (e.g. an empty-vs-populated Companion object)
+    # but a real, correct call-site-anchored pair — must still be accepted
+    # even though it would fail the default (or even a very high) threshold.
+    helper_l = _cls("Lcom/acme/HelperL;", methods=synthetic.standard_methods())
+    helper_r = _cls("Lcom/acme/HelperR;", methods=())
+
+    matches = [caller_match, _deleted(helper_l), _added(helper_r)]
+    out = propagate_matches(matches, threshold=0.99)
+    paired = {(m.lhs.descriptor, m.rhs.descriptor) for m in out if m.is_paired}
+    assert (helper_l.descriptor, helper_r.descriptor) in paired
+
+
+def test_call_site_anchor_rejects_a_genuinely_nonsensical_pairing():
+    caller_l = _method("build", instantiates=("Lcom/acme/HelperL;",))
+    caller_r = _method("build", instantiates=("Lcom/acme/HelperR;",))
+    mm = MethodMatch(lhs=caller_l, rhs=caller_r, score=1.0, status="matched")
+    caller_match = _paired(_cls("Lcom/acme/CallerL;"), _cls("Lcom/acme/CallerR;"), method_matches=(mm,))
+
+    helper_l = _cls("Lcom/acme/HelperL;", methods=synthetic.standard_methods())
+    helper_r = _cls(
+        "Lcom/acme/HelperR;",
+        methods=(
+            synthetic.MethodSpec(
+                name="totallyDifferent", descriptor="(IIIII)J", arg_count=5, return_type="J",
+                bytecode=bytes(range(1, 11)), instr_count=10,
+            ),
+        ),
+        fields=(
+            synthetic.FieldSpec(name="x", type_desc="Ljava/lang/String;"),
+            synthetic.FieldSpec(name="y", type_desc="J"),
+        ),
+    )
+
+    matches = [caller_match, _deleted(helper_l), _added(helper_r)]
+    out = propagate_matches(matches)
+    paired = {(m.lhs.descriptor, m.rhs.descriptor) for m in out if m.is_paired}
+    assert (helper_l.descriptor, helper_r.descriptor) not in paired
+
+
+def test_call_site_anchor_resolves_what_declared_type_propagation_cannot():
+    """Two small, mutually-identical decoy classes: content-only matching (and
+    M1.3's declared-type propagation, which has no reference to either of
+    them at all) can't tell them apart. The call site can, because each is
+    instantiated by a distinctly-matched caller.
+    """
+    small = synthetic.standard_methods()
+    decoy_a_l, decoy_a_r = _cls("La;", methods=small), _cls("La2;", methods=small)
+    decoy_b_l, decoy_b_r = _cls("Lb;", methods=small), _cls("Lb2;", methods=small)
+
+    caller1_l = _method("m1", instantiates=("La;",))
+    caller1_r = _method("m1", instantiates=("La2;",))
+    mm1 = MethodMatch(lhs=caller1_l, rhs=caller1_r, score=1.0, status="matched")
+    caller1_match = _paired(_cls("Lc1;"), _cls("Lc1_2;"), method_matches=(mm1,))
+
+    caller2_l = _method("m2", instantiates=("Lb;",))
+    caller2_r = _method("m2", instantiates=("Lb2;",))
+    mm2 = MethodMatch(lhs=caller2_l, rhs=caller2_r, score=1.0, status="matched")
+    caller2_match = _paired(_cls("Lc2;"), _cls("Lc2_2;"), method_matches=(mm2,))
+
+    matches = [
+        caller1_match, caller2_match,
+        _deleted(decoy_a_l), _deleted(decoy_b_l),
+        _added(decoy_a_r), _added(decoy_b_r),
+    ]
+    out = propagate_matches(matches, threshold=0.8)
+    paired = {(m.lhs.descriptor, m.rhs.descriptor) for m in out if m.is_paired}
+    assert ("La;", "La2;") in paired
+    assert ("Lb;", "Lb2;") in paired

@@ -15,6 +15,21 @@ from pathlib import Path
 
 _CLASS_LINE_SEP = " -> "
 
+# D8/R8 compiler-generated bookkeeping class markers (lambda desugaring, API
+# backport shims, large-constant-pool outlining) — deliberately narrow.
+# Plain anonymous-class suffixes like "Foo$bar$1" are NOT matched here: the
+# CalculatorM3 diagnosis (M3.2) found these commonly hold real logic (e.g.
+# Kotlin coroutine continuation bodies), so excluding them would throw away
+# exactly the classes recall improvements should be measured against.
+_SYNTHETIC_NAME_MARKERS = ("$$ExternalSynthetic", "$$Lambda$")
+
+
+def is_synthetic_like(fqcn: str) -> bool:
+    """Heuristic: does this donor-side class name look like compiler-generated
+    bookkeeping rather than real logic worth grading recall against?
+    """
+    return any(marker in fqcn for marker in _SYNTHETIC_NAME_MARKERS)
+
 
 def parse_class_mapping(text: str) -> dict[str, str]:
     """Parse class-level lines of a ProGuard mapping.txt.

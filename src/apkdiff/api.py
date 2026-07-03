@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .accurate import class_similarity, compare_classes, greedy_assign
+from .accurate import class_similarity, compare_classes, select_assignment
 from .anchor import seed_anchors
 from .cluster import ClusterOptions, build_pools
 from .model import App, Class, DiffOptions, Match, Pool
@@ -80,7 +80,7 @@ def diff(
 
         if opts.progress:
             before = sum(1 for m in matches if m.is_paired)
-        matches = propagate_matches(matches, threshold=threshold)
+        matches = propagate_matches(matches, threshold=threshold, assignment=opts.assignment)
         if opts.progress:
             after = sum(1 for m in matches if m.is_paired)
             _log(f"  propagation: +{after - before} matches (type-graph cascade)")
@@ -178,7 +178,7 @@ def _diff_pool(pool: Pool, opts: DiffOptions, threshold: float) -> list[Match]:
             rate = n / (time.perf_counter() - t)
             _log(f"      scored {n}/{len(todo)} classes ({rate:.0f}/s)")
 
-    assigned = greedy_assign(candidates)
+    assigned = select_assignment(candidates, opts.assignment)
 
     paired_lhs: set[int] = set()
     paired_rhs: set[int] = set()

@@ -176,6 +176,25 @@ def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
     )
 
 
+NEW_INSTANCE_OPCODE = 0x22
+
+
+def _new_instance_target(ins) -> str | None:
+    """Class descriptor a `new-instance` instruction targets, or None.
+
+    `get_operands(0)` returns operand tuples; the type/string-reference one
+    is `(kind, index, resolved_string)` — pull the resolved descriptor
+    directly rather than parsing `get_output()` text.
+    """
+    try:
+        for operand in ins.get_operands(0):
+            if isinstance(operand, tuple) and len(operand) == 3 and isinstance(operand[2], str):
+                return operand[2]
+    except Exception:
+        pass
+    return None
+
+
 def _wrap_method(em, analysis=None) -> Method:
     name = em.get_name()
     descriptor = em.get_descriptor()  # e.g. "(II)V"
@@ -184,6 +203,7 @@ def _wrap_method(em, analysis=None) -> Method:
 
     opcodes = bytearray()
     opcode_xor = 0
+    instantiates: list[str] = []
     code = em.get_code()
     if code is not None:
         try:
@@ -193,11 +213,16 @@ def _wrap_method(em, analysis=None) -> Method:
                     continue
                 opcodes.append(op & 0xFF)
                 opcode_xor ^= op & 0xFF
+                if op == NEW_INSTANCE_OPCODE:
+                    target = _new_instance_target(ins)
+                    if target:
+                        instantiates.append(target)
         except Exception:
             # Some pathological DEX files have unparseable instruction
             # streams. Treat the body as empty rather than failing the load.
             opcodes = bytearray()
             opcode_xor = 0
+            instantiates = []
 
     calls, xref_count = _method_calls_and_xrefs(em, analysis)
 
@@ -212,6 +237,7 @@ def _wrap_method(em, analysis=None) -> Method:
         instr_count=len(opcodes),
         opcode_xor=opcode_xor,
         calls=calls,
+        instantiates=tuple(instantiates),
     )
 
 

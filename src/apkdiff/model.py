@@ -51,6 +51,13 @@ class Method:
     # the loader from the call graph; empty for synthetic/test classes. Feeds
     # the B1 framework-call anchors in anchor.py.
     calls: tuple[str, ...] = ()
+    # Class descriptors this method instantiates via `new-instance`, in
+    # appearance order (duplicates kept — both position and count matter).
+    # Feeds M1.4's call-site anchor: R8 can rename the instantiated class and
+    # reshuffle unrelated code, but can't disconnect a `new-instance` from its
+    # call site, so once the caller method is matched, the Nth thing it
+    # instantiates is still (usually) the Nth on the other side.
+    instantiates: tuple[str, ...] = ()
 
     @property
     def order_key(self) -> int:
@@ -200,6 +207,8 @@ class DiffOptions:
     cluster: bool = True
     anchoring: bool = True
     propagation: bool = True
+    # M2.1: "greedy" | "hungarian" | "auto" — see accurate.py::select_assignment.
+    assignment: str = "auto"
     progress: bool = False
 
     @classmethod
