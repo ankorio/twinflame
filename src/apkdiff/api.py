@@ -159,7 +159,7 @@ def _diff_pool(pool: Pool, opts: DiffOptions, threshold: float) -> list[Match]:
     anchored_rhs = set(anchored.values())
 
     # Stage 2/3 — structural matching over the classes anchoring didn't claim.
-    index = LSHIndex(n_permutations=opts.buckets)
+    index = LSHIndex(n_permutations=opts.buckets, probe_radius=opts.probe_radius)
     for j, c in enumerate(pool.rhs):
         if j not in anchored_rhs:
             index.add(compute_signature(c), payload=j)

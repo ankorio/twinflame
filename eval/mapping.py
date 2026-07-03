@@ -31,6 +31,15 @@ def is_synthetic_like(fqcn: str) -> bool:
     return any(marker in fqcn for marker in _SYNTHETIC_NAME_MARKERS)
 
 
+# R8 records classes it *deleted* (dead-code shrinking) in mapping.txt with a
+# placeholder obfuscated name like `R8$$REMOVED$$CLASS$$213`. These classes do
+# not exist in the APK, so counting them as ground truth is a phantom false
+# negative — the matcher can never pair a class that isn't there. Exclude them
+# from every oracle (measured at up to 5% of a corpus's app classes).
+def is_removed_target(obf_name: str) -> bool:
+    return "R8$$REMOVED" in obf_name
+
+
 def parse_class_mapping(text: str) -> dict[str, str]:
     """Parse class-level lines of a ProGuard mapping.txt.
 

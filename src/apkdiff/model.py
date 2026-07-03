@@ -198,9 +198,21 @@ class DiffOptions:
     external_skipping: bool = False
     synthetic_skipping: bool = True
     find_obfuscated_packages: bool = False
-    min_inst_size_threshold: int = 5
+    # Skip classes with fewer than this many total instructions. Lowered 5->2
+    # after measuring across corpora (see eval/corpus/README.md): the old 5
+    # dropped small-but-real classes and cost recall far more than it saved in
+    # precision. 2 keeps everything with a real body while still skipping empty
+    # 0/1-instruction marker/interface shells (which are maximally ambiguous).
+    # Release-vs-release (the real UC1/UC2) gains big recall at ~0 precision cost.
+    min_inst_size_threshold: int = 2
     top_match_threshold: int = 3
     buckets: int = 16
+    # Multi-probe LSH radius (0/1/2). Default 0 (off): measured to add no
+    # end-to-end recall at buckets=16 (see signature.PROBE_RADIUS_DEFAULT and
+    # eval/corpus/README.md). Raise it only when running with few permutations.
+    # Kept in sync with signature.PROBE_RADIUS_DEFAULT (can't import it here —
+    # signature.py imports this module).
+    probe_radius: int = 0
     jobs: int = 1
     use_source_file: bool = False
     use_strings: bool = False

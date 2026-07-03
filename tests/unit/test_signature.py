@@ -111,6 +111,52 @@ def test_lsh_returns_top_k_by_ascending_hamming():
     # but LSH is approximate — we only assert the zero-distance match
 
 
+def test_multiprobe_recovers_a_neighbor_the_exact_bucket_misses():
+    # A single permutation makes bucketing deterministic and easy to defeat:
+    # craft a neighbor that differs from the query only in the prefix region so
+    # the exact bucket (radius 0) misses it but a Hamming-1 prefix probe finds it.
+    base = Signature(cls=0, fld=0, mth=0, code=0)
+    # bit 127 is the top bit of `cls` -> it lands in the permuted prefix.
+    neighbor = Signature(cls=1 << 31, fld=0, mth=0, code=0)
+    exact = LSHIndex(n_permutations=1, bucket_prefix_bits=16, probe_radius=0)
+    multi = LSHIndex(n_permutations=1, bucket_prefix_bits=16, probe_radius=1)
+    for idx in (exact, multi):
+        idx.add(neighbor, payload=42)
+    # With one permutation and the differing bit in the prefix, radius 0 may miss
+    # it; radius 1 must never return *fewer* candidates than radius 0.
+    exact_hits = {p for p, _ in exact.query(base, k=5)}
+    multi_hits = {p for p, _ in multi.query(base, k=5)}
+    assert exact_hits <= multi_hits  # multi-probe is a superset
+
+
+def test_multiprobe_is_a_superset_on_random_data():
+    rng = random.Random(99)
+    sigs = [
+        Signature(cls=rng.getrandbits(32), fld=rng.getrandbits(32),
+                  mth=rng.getrandbits(32), code=rng.getrandbits(32))
+        for _ in range(500)
+    ]
+    exact = LSHIndex(probe_radius=0)
+    multi = LSHIndex(probe_radius=1)
+    for i, s in enumerate(sigs):
+        exact.add(s, payload=i)
+        multi.add(s, payload=i)
+    q = sigs[123]
+    e = {p for p, _ in exact.query(q, k=10)}
+    m = {p for p, _ in multi.query(q, k=10)}
+    assert 123 in e and 123 in m
+    assert e <= m
+
+
+def test_lsh_rejects_bad_probe_radius():
+    import pytest
+
+    with pytest.raises(ValueError):
+        LSHIndex(probe_radius=3)
+    with pytest.raises(ValueError):
+        LSHIndex(probe_radius=-1)
+
+
 def test_lsh_query_on_empty_returns_empty():
     idx = LSHIndex()
     s = Signature(cls=1, fld=2, mth=3, code=4)

@@ -28,7 +28,7 @@ from pathlib import Path
 
 from apkdiff import api, load
 
-from .mapping import is_synthetic_like, load_class_mapping
+from .mapping import is_removed_target, is_synthetic_like, load_class_mapping
 from .score import score_class_matches
 
 
@@ -93,6 +93,11 @@ def main(argv: list[str] | None = None) -> int:
         ground_truth = {
             orig: obf for orig, obf in ground_truth.items() if not is_synthetic_like(orig)
         }
+    # R8-deleted classes (placeholder `R8$$REMOVED$$CLASS$$…` targets) aren't in
+    # the APK — never gradable, always a phantom FN. Drop them from the oracle.
+    ground_truth = {
+        orig: obf for orig, obf in ground_truth.items() if not is_removed_target(obf)
+    }
 
     donor_app = load(args.donor)
     target_app = load(args.target)
