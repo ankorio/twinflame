@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from . import api, manifest, report
+from .model import DiffOptions
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -26,7 +27,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--neighbors", "-k", type=int, default=3, help="top-k Stage-2 neighbors retained for Stage 3")
     p.add_argument("--buckets", "-n", type=int, default=16, help="number of LSH permutations / buckets")
     p.add_argument("--threshold", "-t", type=float, default=0.8, help="minimum similarity to report as a match")
-    p.add_argument("--min-instr", type=int, default=5, help="skip classes with fewer than N total instructions")
+    p.add_argument("--min-instr", type=int, default=DiffOptions().min_inst_size_threshold, help="skip classes with fewer than N total instructions")
     p.add_argument("--skip-synthetic", dest="skip_synthetic", action="store_true", default=True)
     p.add_argument("--no-skip-synthetic", dest="skip_synthetic", action="store_false")
     p.add_argument("--skip-inner", action="store_true", help="skip inner classes (name contains '$')")
@@ -40,6 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
         "only on small, genuinely ambiguous pools; greedy everywhere else)",
     )
     p.add_argument("--progress", action="store_true", help="print per-pool / per-batch diff progress to stderr")
+    p.add_argument("--changes", action="store_true", help="output a semantic change report (added/removed/modified/cosmetic, ranked by review-worthiness) instead of the raw class-match list")
+    p.add_argument("--changes-json", metavar="OUT", type=Path, help="write the semantic change report as machine-consumable JSON to this path")
     p.add_argument("--json", metavar="OUT", type=Path, help="also write JSON report to this path")
     p.add_argument("--deobfuscation-map", metavar="OUT", type=Path, help="write a ProGuard mapping.txt that renames apk2's obfuscated classes using names recovered from matched apk1 classes (cross-version propagation)")
     p.add_argument("--map-min-confidence", type=float, default=0.8, help="minimum match similarity to include a class in the deobfuscation map (anchored matches always included)")
@@ -86,7 +89,26 @@ def main(argv: list[str] | None = None) -> int:
     t_diff = time.perf_counter() - t_diff_start
     print(f"diff: {t_diff:.2f}s ({len(matches)} matches)", file=sys.stderr)
 
-    print(report.render_human(matches))
+    change_list = None
+    if args.changes or args.changes_json:
+        from . import changes as changes_mod
+
+        change_list = changes_mod.change_set(matches)
+        if args.progress:
+            from collections import Counter
+
+            print(f"changes: {dict(Counter(c.kind for c in change_list))}", file=sys.stderr)
+
+    if args.changes:
+        from . import changes as changes_mod
+
+        print(changes_mod.render_text(change_list))
+    else:
+        print(report.render_human(matches))
+    if args.changes_json:
+        from . import changes as changes_mod
+
+        args.changes_json.write_text(changes_mod.render_json(change_list))
     if args.json:
         args.json.write_text(report.render_json(matches))
     if args.deobfuscation_map:
