@@ -3,8 +3,8 @@
 The four-stage matcher answers *which* class in build A corresponds to which in
 build B. It scores that correspondence with a structural similarity that also
 moves on pure re-obfuscation / re-optimization noise, so the distance alone is a
-poor *change* signal (the benchmark 1.8.2->1.9.1 run is the motivating case: two
-builds with different R8 configs looked ~"all modified" structurally while most
+poor *change* signal (a private benchmark app's v1->v2 run is the motivating case:
+two builds with different R8 configs looked ~"all modified" structurally while most
 of it was noise). This layer extracts the **obfuscation-robust semantic content**
 whose *change between a matched pair* actually indicates behaviour change:
 
@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from typing import Mapping, Optional
 
 from .anchor import FRAMEWORK_PREFIXES
-from .model import Class
+from .model import Class, Method
 
 # Class-match map: build-A class descriptor -> build-B class descriptor.
 ClassMap = Mapping[str, str]
@@ -71,7 +71,7 @@ def _informative(s: str) -> bool:
     """Whether a string constant carries enough signal to count as a semantic
     delta. Drops empty / whitespace / punctuation-only / single-char strings
     (e.g. ``''``, ``' ['``, ``'"'``) that otherwise inflate the change magnitude
-    without indicating a real edit — the noise seen in the benchmark run. Same
+    without indicating a real edit — the noise seen on the private benchmark app. Same
     spirit as ``anchor.MIN_STRING_LEN``, but content- rather than length-based."""
     return sum(1 for ch in s if ch.isalnum()) >= 2
 
@@ -253,3 +253,81 @@ def class_change(
     owner names translated A->B); without it only framework-stable features are
     compared (backward-compatible)."""
     return diff_features(class_features(lhs), class_features(rhs), class_map)
+
+
+# --- per-method localization ------------------------------------------------
+
+def method_framework_calls(m: Method) -> set[str]:
+    """Framework/library call targets this single method invokes — the
+    rename-invariant, method-local behavioural signal used to localise a class
+    change down to the method(s) that actually changed behaviour."""
+    return {ref for ref in m.calls if _is_framework(ref)}
+
+
+@dataclass(frozen=True, slots=True)
+class MethodDelta:
+    """A localized method-level change inside a modified class.
+
+    `name`/`descriptor` are obfuscated (locate the method via the deobfuscation
+    map + decompiler); the actionable content is the status and the
+    framework-call delta / size.
+    """
+
+    status: str                 # "modified" | "added" | "deleted"
+    name: str                   # obfuscated method name
+    descriptor: str             # method proto, e.g. "(Landroid/os/Bundle;)V"
+    instr_count: int            # method size (new size for added/modified)
+    calls_added: tuple[str, ...]
+    calls_removed: tuple[str, ...]
+
+    @property
+    def call_delta(self) -> int:
+        return len(self.calls_added) + len(self.calls_removed)
+
+    def summary(self) -> str:
+        if self.status == "added":
+            return f"added method ({self.instr_count} instr)"
+        if self.status == "deleted":
+            return f"removed method ({self.instr_count} instr)"
+        parts = []
+        if self.calls_added:
+            parts.append(f"+{len(self.calls_added)} calls")
+        if self.calls_removed:
+            parts.append(f"-{len(self.calls_removed)} calls")
+        return "method " + (", ".join(parts) if parts else "body changed")
+
+
+# Localization order: behavioural edits first (largest call-delta), then new
+# methods, then removed, each by size — most-review-worthy first within a class.
+_METHOD_STATUS_RANK = {"modified": 0, "added": 1, "deleted": 2}
+
+
+def localize_method_changes(method_matches) -> tuple[MethodDelta, ...]:
+    """Turn a match's per-method verdicts into localized `MethodDelta`s.
+
+    `modified` methods are surfaced **only when their framework-call set moved**
+    (a body-only re-optimization with no external-call change is indistinguishable
+    from cosmetic noise given the features we carry, so it is not localized).
+    `added`/`deleted` methods are always structural and always surfaced.
+    """
+    out: list[MethodDelta] = []
+    for mm in method_matches:
+        if mm.status == "added" and mm.rhs is not None:
+            out.append(MethodDelta("added", mm.rhs.name, mm.rhs.descriptor,
+                                   mm.rhs.instr_count,
+                                   tuple(sorted(method_framework_calls(mm.rhs))), ()))
+        elif mm.status == "deleted" and mm.lhs is not None:
+            out.append(MethodDelta("deleted", mm.lhs.name, mm.lhs.descriptor,
+                                   mm.lhs.instr_count,
+                                   (), tuple(sorted(method_framework_calls(mm.lhs)))))
+        elif mm.status == "modified" and mm.lhs is not None and mm.rhs is not None:
+            added, removed = _sorted_diff(
+                frozenset(method_framework_calls(mm.lhs)),
+                frozenset(method_framework_calls(mm.rhs)),
+            )
+            if added or removed:  # only localize a behavioural (call-set) change
+                out.append(MethodDelta("modified", mm.rhs.name, mm.rhs.descriptor,
+                                       mm.rhs.instr_count, added, removed))
+    out.sort(key=lambda d: (_METHOD_STATUS_RANK.get(d.status, 9),
+                            -d.call_delta, -d.instr_count, d.name))
+    return tuple(out)

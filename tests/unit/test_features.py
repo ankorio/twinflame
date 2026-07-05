@@ -8,7 +8,9 @@ from apkdiff.features import (
     class_change,
     class_features,
     diff_features,
+    localize_method_changes,
 )
+from apkdiff.model import MethodMatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import synthetic as syn  # noqa: E402
@@ -147,6 +149,45 @@ def test_app_dependency_changed_is_flagged_after_translation():
     assert d.app_refs_added == ("Lx/helper2;",)
     assert d.app_refs_removed == ("Lx/helper1;",)
     assert d.magnitude == 2
+
+
+# --- per-method localization ------------------------------------------------
+
+def _meth(name, calls=(), instr=5, desc="()V"):
+    return syn.make_method(syn.MethodSpec(name=name, descriptor=desc, calls=calls, instr_count=instr))
+
+
+def test_localizes_added_and_deleted_methods():
+    mm = [
+        MethodMatch(lhs=None, rhs=_meth("m", calls=("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;",), instr=12), score=0.0, status="added"),
+        MethodMatch(lhs=_meth("g", instr=7), rhs=None, score=0.0, status="deleted"),
+    ]
+    deltas = localize_method_changes(mm)
+    kinds = {d.status: d for d in deltas}
+    assert kinds["added"].instr_count == 12
+    assert kinds["added"].calls_added == ("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;",)
+    assert kinds["deleted"].instr_count == 7
+
+
+def test_localizes_modified_method_only_when_framework_calls_move():
+    a = _meth("m", calls=("Landroid/util/Log;->d(Ljava/lang/String;)I", "La/app;->x()V"))
+    b = _meth("m", calls=("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;", "La/app;->x()V"))
+    deltas = localize_method_changes([MethodMatch(lhs=a, rhs=b, score=0.6, status="modified")])
+    assert len(deltas) == 1
+    d = deltas[0]
+    assert d.status == "modified"
+    assert d.calls_added == ("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;",)
+    assert d.calls_removed == ("Landroid/util/Log;->d(Ljava/lang/String;)I",)
+
+
+def test_modified_method_without_framework_call_change_is_not_localized():
+    # Body changed (status modified) but framework-call set identical (an app-call
+    # differs, but app calls aren't localized) => not surfaced as noise.
+    a = _meth("m", calls=("Landroid/util/Log;->d(Ljava/lang/String;)I", "La/app;->x()V"))
+    b = _meth("m", calls=("Landroid/util/Log;->d(Ljava/lang/String;)I", "La/app;->y()V"))
+    assert localize_method_changes([MethodMatch(lhs=a, rhs=b, score=0.6, status="modified")]) == ()
+    # matched (identical) methods are never localized
+    assert localize_method_changes([MethodMatch(lhs=a, rhs=a, score=1.0, status="matched")]) == ()
 
 
 def test_untranslatable_app_ref_is_excluded_not_spurious_change():

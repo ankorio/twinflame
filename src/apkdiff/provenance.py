@@ -14,8 +14,8 @@ Signals, in priority order (first match wins):
 
 1. **Under the dev package prefix** -> ``app``. The strongest, most general
    signal; supplied via ``--package`` / ``--auto-package`` (manifest). Survives
-   R8 rename for apps that don't repackage their own code (e.g. benchmark keeps
-   ``com/acme/wallet``). If a build repackages app classes to the root
+   R8 rename for apps that don't repackage their own code (e.g. an app that keeps
+   ``com/acme/app``). If a build repackages app classes to the root
    (``-repackageclasses ''``) this signal is lost and such classes fall to
    ``unknown`` — a documented limitation, not a wrong answer.
 2. **Maven-coordinate SourceFile** -> ``library``. androguard reports the
@@ -67,8 +67,8 @@ ORIGIN_RANK = {"app": 0, "unknown": 1, "library": 2}
 
 
 def dev_descriptor_prefix(package: Optional[str]) -> Optional[str]:
-    """Normalise a dev package (``com.acme.wallet``, ``com/acme/...``,
-    or ``Lcom/acme/...;``) into a descriptor prefix ``Lcom/acme/wallet/``
+    """Normalise a dev package (``com.acme.app``, ``com/acme/app``,
+    or ``Lcom/acme/app;``) into a descriptor prefix ``Lcom/acme/app/``
     suitable for ``str.startswith``. ``None``/empty -> ``None``."""
     if not package:
         return None
@@ -88,7 +88,7 @@ DevPrefix = Union[str, tuple[str, ...], None]
 
 def dev_descriptor_prefixes(packages: Union[str, Iterable[str], None]) -> tuple[str, ...]:
     """Normalise one or many dev packages into descriptor prefixes (multi-root
-    apps commonly ship under several, e.g. `com.acme.*` and `com.example.*`)."""
+    apps commonly ship under several, e.g. `com.acme.app.*` and `com.acme.other.*`)."""
     if packages is None:
         return ()
     if isinstance(packages, str):

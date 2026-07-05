@@ -14,7 +14,7 @@ out of git); only the reproducible recipe lives here. Build outputs go to a work
 | Fossify Contacts | built here (below) | `mapping.txt` | rename recovery (UC3) — **second corpus** |
 | BlackyHawky Clock | built here (below) | `mapping.txt` | rename recovery (UC3) |
 | OpenCamera | built here (below) | `mapping.txt` | rename recovery (UC3) |
-| benchmark 1.8.2 / 1.9.1 | supplied binaries | none (unlabeled) | version change (UC1) — spot-check only |
+| private benchmark app (2 releases) | supplied binaries | none (unlabeled) | version change (UC1) — spot-check only |
 
 The buildable OSS apps are the important unlock: because we control the build we get a
 `mapping.txt` oracle for free, **and** we can rebuild the same source to measure the

@@ -31,7 +31,13 @@ from typing import Iterable, Optional
 
 from typing import Iterable as _Iterable, Optional, Union
 
-from .features import ClassMap, FeatureDelta, class_change
+from .features import (
+    ClassMap,
+    FeatureDelta,
+    MethodDelta,
+    class_change,
+    localize_method_changes,
+)
 from .model import Class, Match
 from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
@@ -53,6 +59,7 @@ class ClassChange:
     anchored: bool              # match rests on a string/framework-call anchor
     origin: str                 # "app" / "library" / "unknown" (review priority)
     delta: Optional[FeatureDelta]  # only for "modified"
+    method_deltas: tuple[MethodDelta, ...] = ()  # per-method localization (modified)
 
     @property
     def summary(self) -> str:
@@ -99,8 +106,10 @@ def classify_match(
     src = m.lhs.source_file or m.rhs.source_file
     origin = origin_of(m.lhs, dev_prefix)  # older side names the class we review
     if delta.is_semantic:
+        method_deltas = localize_method_changes(m.method_matches)
         return ClassChange("modified", m.lhs.descriptor, m.rhs.descriptor, src,
-                           delta.magnitude, m.distance, anchored, origin, delta)
+                           delta.magnitude, m.distance, anchored, origin, delta,
+                           method_deltas)
     kind = "unchanged" if m.distance >= _IDENTICAL else "cosmetic"
     return ClassChange(kind, m.lhs.descriptor, m.rhs.descriptor, src,
                        0, m.distance, anchored, origin, None)
@@ -157,6 +166,18 @@ def render_json(changes: Iterable[ClassChange]) -> str:
                 "app_types_added": list(c.delta.app_refs_added),
                 "app_types_removed": list(c.delta.app_refs_removed),
             }
+        if c.method_deltas:
+            row["methods"] = [
+                {
+                    "status": md.status,
+                    "name": md.name,
+                    "descriptor": md.descriptor,
+                    "instr_count": md.instr_count,
+                    "calls_added": list(md.calls_added),
+                    "calls_removed": list(md.calls_removed),
+                }
+                for md in c.method_deltas
+            ]
         rows.append(row)
     return json.dumps({"summary": counts(changes), "changes": rows},
                       indent=2, sort_keys=True)
@@ -194,6 +215,8 @@ def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
             src = x.source_file or x.lhs or "?"
             anc = " [anchored]" if x.anchored else ""
             lines.append(f"  {_tag(x)} [{x.magnitude:4d}] {src}  {x.summary}{anc}")
+            for md in x.method_deltas[:3]:  # localize to the top changed methods
+                lines.append(f"          - {md.name}{md.descriptor}: {md.summary()}")
     added = [x for x in changes if x.kind == "added"][:top]
     if added:
         lines.append("\ntop added (app-first, then by size):")

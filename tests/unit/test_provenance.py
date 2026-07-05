@@ -15,10 +15,10 @@ import synthetic as syn  # noqa: E402
 
 
 def test_dev_prefix_normalisation_accepts_any_form():
-    want = "Lcom/acme/wallet/"
-    assert dev_descriptor_prefix("com.acme.wallet") == want
-    assert dev_descriptor_prefix("com/acme/wallet") == want
-    assert dev_descriptor_prefix("Lcom/acme/wallet;") == want
+    want = "Lcom/acme/app/"
+    assert dev_descriptor_prefix("com.acme.app") == want
+    assert dev_descriptor_prefix("com/acme/app") == want
+    assert dev_descriptor_prefix("Lcom/acme/app;") == want
     assert dev_descriptor_prefix(None) is None
     assert dev_descriptor_prefix("") is None
 
@@ -49,16 +49,16 @@ def test_unknown_when_no_signal():
 
 
 def test_multi_root_app_prefixes():
-    prefixes = dev_descriptor_prefixes(["com.acme", "com.example"])
-    assert prefixes == ("Lcom/acme/", "Lcom/example/")
+    prefixes = dev_descriptor_prefixes(["com.acme.app", "com.acme.other"])
+    assert prefixes == ("Lcom/acme/app/", "Lcom/acme/other/")
     # both roots classify as app
-    assert classify_origin("Lcom/acme/wallet/Svc;", None, prefixes) == "app"
-    assert classify_origin("Lcom/example/tmob/Api;", None, prefixes) == "app"
+    assert classify_origin("Lcom/acme/app/core/Svc;", None, prefixes) == "app"
+    assert classify_origin("Lcom/acme/other/net/Api;", None, prefixes) == "app"
     # a library still sinks
     assert classify_origin("Lcom/fasterxml/jackson/Bean;", None, prefixes) == "library"
     # empty/None means no app labeling, but library heuristics still apply
     assert dev_descriptor_prefixes(None) == ()
-    assert classify_origin("Lcom/acme/X;", None, ()) == "unknown"
+    assert classify_origin("Lcom/acme/app/X;", None, ()) == "unknown"
 
 
 def test_expanded_library_prefixes():

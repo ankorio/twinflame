@@ -11,7 +11,7 @@ from apkdiff.changes import (
     render_json,
     render_text,
 )
-from apkdiff.model import Match
+from apkdiff.model import Match, MethodMatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import synthetic as syn  # noqa: E402
@@ -143,6 +143,23 @@ def test_origin_defaults_to_library_or_unknown_without_dev_package():
     by_lhs = {c.lhs: c.origin for c in ordered}
     assert by_lhs["Landroidx/work/W;"] == "library"
     assert by_lhs["Lcom/myapp/A;"] == "unknown"  # can't confirm app without dev pkg
+
+
+def test_method_localization_flows_into_report():
+    a = _cls(descriptor="La/a;", methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),))
+    b = _cls(descriptor="Lx/y;", methods=(_m_call("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"),))
+    am = syn.make_method(syn.MethodSpec(name="run", descriptor="()V",
+                                        calls=("Landroid/util/Log;->d(Ljava/lang/String;)I",), instr_count=6))
+    bm = syn.make_method(syn.MethodSpec(name="run", descriptor="()V",
+                                        calls=("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;",), instr_count=6))
+    m = Match(a, b, 0.6, {}, (MethodMatch(lhs=am, rhs=bm, score=0.6, status="modified"),))
+    doc = json.loads(render_json(change_set([m])))
+    row = doc["changes"][0]
+    assert row["kind"] == "modified"
+    assert "methods" in row and row["methods"][0]["status"] == "modified"
+    assert row["methods"][0]["calls_added"] == ["Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"]
+    txt = render_text(change_set([m]))
+    assert "run()V:" in txt  # method sub-line rendered under the modified class
 
 
 def test_counts_helper():
