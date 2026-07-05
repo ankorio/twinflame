@@ -31,6 +31,13 @@ def load_dex(paths, *, label: str | None = None) -> App:
     return loader.load_dex(paths, label=label)
 
 
+def _load_error():
+    """The exception type raised by load/load_dex on bad input (lazy import)."""
+    from .loader import LoadError
+
+    return LoadError
+
+
 def filter(classes: Iterable[Class], condition: Optional[dict] = None) -> list[Class]:
     if not condition:
         return list(classes)

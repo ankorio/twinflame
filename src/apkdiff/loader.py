@@ -6,24 +6,46 @@ from typing import Optional
 from .model import AccessFlag, App, Class, Field, ManifestInfo, Method
 
 
+class LoadError(Exception):
+    """A user-facing input error: missing path, not an APK/DEX, or corrupt file.
+
+    Raised instead of leaking an androguard/apkInspector/zip traceback so the CLI
+    can print a clean message and exit non-zero.
+    """
+
+
 def load(path: str | Path, *, redex_normalize: bool = False) -> App:
     """Parse an APK into an `App` view.
 
     Multi-DEX is resolved into a single unioned class list (first-wins on
-    descriptor collision, matching ART semantics).
+    descriptor collision, matching ART semantics). Raises `LoadError` on a
+    missing/unreadable/corrupt APK.
     """
     # Local imports keep androguard out of the import graph of callers that
     # use the API only to consume pre-built `Class` objects (e.g. tests).
     from androguard.core.apk import APK
 
     target = Path(path)
+    if not target.exists():
+        raise LoadError(f"file not found: {target}")
+    if not target.is_file():
+        raise LoadError(f"not a file (is it a directory of .dex? use --dex): {target}")
     if redex_normalize:
         from . import normalize as _normalize
 
         target = _normalize.normalize(target)
 
-    apk = APK(str(target))
-    classes = _merge_dexes_from_blobs(list(apk.get_all_dex()))
+    try:
+        apk = APK(str(target))
+        blobs = list(apk.get_all_dex())
+    except Exception as e:  # androguard/apkInspector: bad zip, no EOCD, etc.
+        raise LoadError(f"not a valid APK ({target.name}): {e}") from e
+    if not blobs:
+        raise LoadError(f"APK contains no DEX ({target.name}) — nothing to diff")
+    try:
+        classes = _merge_dexes_from_blobs(blobs)
+    except Exception as e:
+        raise LoadError(f"could not parse DEX inside {target.name}: {e}") from e
     manifest = _parse_manifest(apk)
     return App(path=target, classes=tuple(classes), manifest=manifest)
 
@@ -40,15 +62,30 @@ def load_dex(paths, *, label: str | None = None) -> App:
 
     Multi-DEX is unioned first-wins on descriptor collision, exactly like APK
     loading, so a directory of `classes.dex, classes2.dex, …` behaves like the
-    APK it came from.
+    APK it came from. Raises `LoadError` on a missing directory/file or a corrupt
+    DEX.
     """
     files = _collect_dex_files(paths)
     if not files:
-        raise ValueError(f"no .dex files found in: {paths}")
-    blobs = [Path(f).read_bytes() for f in files]
-    classes = _merge_dexes_from_blobs(blobs)
+        raise LoadError(f"no .dex files found in: {_fmt_paths(paths)}")
+    for f in files:
+        if not Path(f).exists():
+            raise LoadError(f"file not found: {f}")
+        if not Path(f).is_file():
+            raise LoadError(f"not a file: {f}")
+    try:
+        blobs = [Path(f).read_bytes() for f in files]
+        classes = _merge_dexes_from_blobs(blobs)
+    except Exception as e:
+        raise LoadError(f"could not parse DEX ({len(files)} file(s)): {e}") from e
     where = Path(label) if label else Path(files[0])
     return App(path=where, classes=tuple(classes), manifest=None)
+
+
+def _fmt_paths(paths) -> str:
+    if isinstance(paths, (str, Path)):
+        return str(paths)
+    return ", ".join(str(p) for p in paths)
 
 
 def _collect_dex_files(paths) -> list[Path]:

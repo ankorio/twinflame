@@ -47,6 +47,42 @@ def test_collect_empty_when_nothing_matches(tmp_path: Path):
     assert _collect_dex_files(tmp_path) == []
 
 
+# --- clean failures on bad input (no traceback leaks) ------------------------
+
+def test_load_raises_loaderror_on_missing_file(tmp_path: Path):
+    from apkdiff.loader import LoadError, load
+    with pytest.raises(LoadError, match="file not found"):
+        load(tmp_path / "nope.apk")
+
+
+def test_load_raises_loaderror_on_non_apk(tmp_path: Path):
+    from apkdiff.loader import LoadError, load
+    f = tmp_path / "text.apk"
+    f.write_text("not an apk")
+    with pytest.raises(LoadError):
+        load(f)
+
+
+def test_load_dex_raises_loaderror_on_empty_dir(tmp_path: Path):
+    from apkdiff.loader import LoadError, load_dex
+    with pytest.raises(LoadError, match="no .dex files"):
+        load_dex(tmp_path)
+
+
+def test_load_dex_raises_loaderror_on_missing_file(tmp_path: Path):
+    from apkdiff.loader import LoadError, load_dex
+    with pytest.raises(LoadError, match="file not found"):
+        load_dex([tmp_path / "gone.dex"])
+
+
+def test_load_dex_raises_loaderror_on_corrupt_dex(tmp_path: Path):
+    from apkdiff.loader import LoadError, load_dex
+    bad = tmp_path / "junk.dex"
+    bad.write_bytes(b"dex\n035\x00garbage")
+    with pytest.raises(LoadError, match="could not parse DEX"):
+        load_dex([bad])
+
+
 # --- round-trip: raw DEX loads to the same classes as its APK ----------------
 # Needs a real APK; point APKDIFF_TEST_APK at one to enable (kept binary-free in CI).
 

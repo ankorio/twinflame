@@ -58,15 +58,21 @@ def _build_parser() -> argparse.ArgumentParser:
 def _load_side(positional, dex_paths, *, redex_normalize: bool, n: int):
     """Resolve one side's input into an `App`. Priority: explicit --dexN list >
     positional. A positional that is a directory or a .dex file is loaded as raw
-    DEX (dumped content); otherwise it's parsed as an APK."""
-    if dex_paths:
-        return api.load_dex(dex_paths)
-    if positional is None:
+    DEX (dumped content); otherwise it's parsed as an APK. Exits cleanly (no
+    traceback) on bad input."""
+    from .loader import LoadError
+
+    if not dex_paths and positional is None:
         raise SystemExit(f"error: side {n} has no input — pass an APK/.dex/dir positionally, or --dex{n} <paths>")
-    p = Path(positional)
-    if p.is_dir() or p.suffix.lower() == ".dex":
-        return api.load_dex([p])
-    return api.load(p, redex_normalize=redex_normalize)
+    try:
+        if dex_paths:
+            return api.load_dex(dex_paths)
+        p = Path(positional)
+        if p.is_dir() or p.suffix.lower() == ".dex":
+            return api.load_dex([p])
+        return api.load(p, redex_normalize=redex_normalize)
+    except LoadError as e:
+        raise SystemExit(f"error: side {n}: {e}")
 
 
 def main(argv: list[str] | None = None) -> int:
