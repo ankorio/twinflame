@@ -15,8 +15,10 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="apkdiff",
         description="DEX-level Android APK class-diffing engine.",
     )
-    p.add_argument("apk1", type=Path, help="left-hand-side APK (original)")
-    p.add_argument("apk2", type=Path, help="right-hand-side APK (modified)")
+    p.add_argument("apk1", type=Path, nargs="?", help="left-hand-side input (original): an APK, a .dex file, or a directory of .dex files")
+    p.add_argument("apk2", type=Path, nargs="?", help="right-hand-side input (modified): an APK, a .dex file, or a directory of .dex files")
+    p.add_argument("--dex1", type=Path, nargs="+", metavar="PATH", help="explicit .dex file(s)/dir(s) for the left side (dumped content, no APK); overrides apk1")
+    p.add_argument("--dex2", type=Path, nargs="+", metavar="PATH", help="explicit .dex file(s)/dir(s) for the right side; overrides apk2")
 
     pkg = p.add_mutually_exclusive_group()
     pkg.add_argument("--package", metavar="PREFIX", help="restrict to classes under this package prefix (includes subpackages)")
@@ -51,12 +53,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _load_side(positional, dex_paths, *, redex_normalize: bool, n: int):
+    """Resolve one side's input into an `App`. Priority: explicit --dexN list >
+    positional. A positional that is a directory or a .dex file is loaded as raw
+    DEX (dumped content); otherwise it's parsed as an APK."""
+    if dex_paths:
+        return api.load_dex(dex_paths)
+    if positional is None:
+        raise SystemExit(f"error: side {n} has no input — pass an APK/.dex/dir positionally, or --dex{n} <paths>")
+    p = Path(positional)
+    if p.is_dir() or p.suffix.lower() == ".dex":
+        return api.load_dex([p])
+    return api.load(p, redex_normalize=redex_normalize)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     t_load_start = time.perf_counter()
-    lhs_app = api.load(args.apk1, redex_normalize=args.normalize)
-    rhs_app = api.load(args.apk2, redex_normalize=args.normalize)
+    lhs_app = _load_side(args.apk1, args.dex1, redex_normalize=args.normalize, n=1)
+    rhs_app = _load_side(args.apk2, args.dex2, redex_normalize=args.normalize, n=2)
     t_load = time.perf_counter() - t_load_start
     print(f"load: {t_load:.2f}s ({len(lhs_app.classes)} lhs / {len(rhs_app.classes)} rhs classes)", file=sys.stderr)
 

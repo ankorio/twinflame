@@ -23,15 +23,61 @@ def load(path: str | Path, *, redex_normalize: bool = False) -> App:
         target = _normalize.normalize(target)
 
     apk = APK(str(target))
-    classes = _merge_dexes(apk)
+    classes = _merge_dexes_from_blobs(list(apk.get_all_dex()))
     manifest = _parse_manifest(apk)
     return App(path=target, classes=tuple(classes), manifest=manifest)
 
 
+def load_dex(paths, *, label: str | None = None) -> App:
+    """Parse one or more raw ``.dex`` blobs into an `App`, no APK required.
+
+    `paths` is a path or iterable of paths, each either a ``.dex`` file or a
+    directory (searched recursively for ``*.dex``). This is the entry point for
+    **dumped / extracted DEX** (e.g. pulled from memory, a runtime dump, or an
+    unpacked payload) where there is no surrounding APK — so `manifest` is
+    ``None`` (features that need it, like ``--auto-package``, are unavailable;
+    pass ``--app-package`` explicitly for provenance instead).
+
+    Multi-DEX is unioned first-wins on descriptor collision, exactly like APK
+    loading, so a directory of `classes.dex, classes2.dex, …` behaves like the
+    APK it came from.
+    """
+    files = _collect_dex_files(paths)
+    if not files:
+        raise ValueError(f"no .dex files found in: {paths}")
+    blobs = [Path(f).read_bytes() for f in files]
+    classes = _merge_dexes_from_blobs(blobs)
+    where = Path(label) if label else Path(files[0])
+    return App(path=where, classes=tuple(classes), manifest=None)
+
+
+def _collect_dex_files(paths) -> list[Path]:
+    """Expand paths (files and/or directories) into a sorted, de-duplicated list
+    of ``.dex`` files. Directories are searched recursively; explicit files are
+    taken as-is (any extension) so an oddly-named dump still works."""
+    if isinstance(paths, (str, Path)):
+        paths = [paths]
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for p in paths:
+        p = Path(p)
+        candidates = sorted(p.rglob("*.dex")) if p.is_dir() else [p]
+        for c in candidates:
+            rc = c.resolve()
+            if rc not in seen:
+                seen.add(rc)
+                out.append(c)
+    return out
+
+
 def _merge_dexes(apk) -> list[Class]:
+    return _merge_dexes_from_blobs(list(apk.get_all_dex()))
+
+
+def _merge_dexes_from_blobs(blobs: list[bytes]) -> list[Class]:
     from androguard.core.dex import DEX
 
-    dexes = [DEX(b) for b in apk.get_all_dex()]
+    dexes = [DEX(b) for b in blobs]
     # Build a whole-app cross-reference graph once. It gives us, per method,
     # both its call targets (B1 anchors) and its incoming-call count (xref),
     # plus the string→class map (B2 anchors). create_xref() is the expensive

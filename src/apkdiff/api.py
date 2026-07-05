@@ -24,6 +24,13 @@ def load(path: str | Path, *, redex_normalize: bool = False) -> App:
     return loader.load(path, redex_normalize=redex_normalize)
 
 
+def load_dex(paths, *, label: str | None = None) -> App:
+    """Load raw .dex file(s)/dir(s) into an `App` (dumped content, no APK)."""
+    from . import loader
+
+    return loader.load_dex(paths, label=label)
+
+
 def filter(classes: Iterable[Class], condition: Optional[dict] = None) -> list[Class]:
     if not condition:
         return list(classes)

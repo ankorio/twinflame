@@ -59,6 +59,23 @@ nix run . -- old.apk new.apk \
 nix run . -- vuln.apk patched.apk --normalize --find-obfuscated
 ```
 
+### Inputs: APK, `.dex`, or dumped DEX (no APK)
+
+Each side accepts an APK, a single `.dex`, or a directory of `.dex` files — so
+you can diff **dumped/extracted DEX** (e.g. pulled from memory or an unpacked
+payload) with no surrounding APK. Explicit lists via `--dex1/--dex2` override the
+positional. A DEX-only input has no manifest, so `--auto-package` is unavailable —
+pass `--app-package <prefix>` for app-vs-library ranking instead.
+
+```sh
+# directory of dumped classes*.dex on each side
+apkdiff dump_old/ dump_new/ --no-cluster --changes
+
+# explicit dex lists (e.g. selected dumps)
+apkdiff --dex1 a/classes.dex a/classes2.dex --dex2 b/classes.dex \
+    --no-cluster --app-package com.target.app --changes-json changes.json
+```
+
 Output format (one line per non-perfect match):
 
 ```
