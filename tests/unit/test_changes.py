@@ -113,6 +113,38 @@ def test_app_type_change_threads_through_class_map_and_json():
     assert row["delta"]["app_types_removed"] == ["Lx/h1;"]
 
 
+def test_app_changes_rank_above_larger_library_changes():
+    # A small app-package edit must outrank a bigger library edit of the same kind.
+    app = Match(
+        _cls(descriptor="Lcom/myapp/A;", methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),)),
+        _cls(descriptor="Lcom/myapp/A;", methods=(_m_call("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"),)),
+        0.7,
+    )
+    lib = Match(
+        _cls(descriptor="Landroidx/work/W;", methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),)),
+        _cls(descriptor="Landroidx/work/W;", methods=(
+            _m_call("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"),
+            syn.MethodSpec(name="n", calls=("Landroid/os/Bundle;-><init>()V", "Landroid/os/Handler;-><init>()V")),
+        )),
+        0.6,
+    )
+    ordered = change_set([lib, app], dev_package="com.myapp")
+    kinds = [c.kind for c in ordered]
+    assert kinds[0] == "modified" and kinds[1] == "modified"
+    assert ordered[0].origin == "app"      # smaller app edit first
+    assert ordered[1].origin == "library"  # bigger library edit demoted
+    assert ordered[0].magnitude < ordered[1].magnitude
+
+
+def test_origin_defaults_to_library_or_unknown_without_dev_package():
+    lib = Match(_cls(descriptor="Landroidx/work/W;"), _cls(descriptor="Landroidx/work/W;"), 1.0)
+    app_like = Match(_cls(descriptor="Lcom/myapp/A;"), _cls(descriptor="Lcom/myapp/A;"), 1.0)
+    ordered = change_set([lib, app_like])  # no dev_package
+    by_lhs = {c.lhs: c.origin for c in ordered}
+    assert by_lhs["Landroidx/work/W;"] == "library"
+    assert by_lhs["Lcom/myapp/A;"] == "unknown"  # can't confirm app without dev pkg
+
+
 def test_counts_helper():
     a = _cls(methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),))
     b = _cls(descriptor="Lx/y;", methods=(_m_call("Landroid/os/Bundle;-><init>()V"),))

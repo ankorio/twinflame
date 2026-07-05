@@ -29,10 +29,11 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
-from typing import Optional
+from typing import Iterable as _Iterable, Optional, Union
 
 from .features import ClassMap, FeatureDelta, class_change
 from .model import Class, Match
+from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
 # Review-worthiness ordering: real edits first, cosmetic/unchanged last.
 _KIND_RANK = {"modified": 0, "added": 1, "removed": 2, "cosmetic": 3, "unchanged": 4}
@@ -50,6 +51,7 @@ class ClassChange:
     magnitude: int              # review-worthiness (feature-delta count / size)
     match_distance: float       # structural distance of the underlying match
     anchored: bool              # match rests on a string/framework-call anchor
+    origin: str                 # "app" / "library" / "unknown" (review priority)
     delta: Optional[FeatureDelta]  # only for "modified"
 
     @property
@@ -77,33 +79,49 @@ def build_class_map(matches: Iterable[Match]) -> dict[str, str]:
     }
 
 
-def classify_match(m: Match, class_map: Optional[ClassMap] = None) -> ClassChange:
-    """One `Match` -> one typed change verdict."""
+def classify_match(
+    m: Match,
+    class_map: Optional[ClassMap] = None,
+    dev_prefix: Union[str, tuple[str, ...], None] = None,
+) -> ClassChange:
+    """One `Match` -> one typed change verdict. `dev_prefix` (a descriptor prefix
+    or tuple of them, from `provenance.dev_descriptor_prefixes`) enables
+    app/library origin tagging."""
     if m.is_added:
         return ClassChange("added", None, m.rhs.descriptor, m.rhs.source_file,
-                           _size(m.rhs), 0.0, False, None)
+                           _size(m.rhs), 0.0, False, origin_of(m.rhs, dev_prefix), None)
     if m.is_deleted:
         return ClassChange("removed", m.lhs.descriptor, None, m.lhs.source_file,
-                           _size(m.lhs), 0.0, False, None)
+                           _size(m.lhs), 0.0, False, origin_of(m.lhs, dev_prefix), None)
 
     delta = class_change(m.lhs, m.rhs, class_map)
     anchored = m.breakdown.get("anchored") == 1.0
     src = m.lhs.source_file or m.rhs.source_file
+    origin = origin_of(m.lhs, dev_prefix)  # older side names the class we review
     if delta.is_semantic:
         return ClassChange("modified", m.lhs.descriptor, m.rhs.descriptor, src,
-                           delta.magnitude, m.distance, anchored, delta)
+                           delta.magnitude, m.distance, anchored, origin, delta)
     kind = "unchanged" if m.distance >= _IDENTICAL else "cosmetic"
     return ClassChange(kind, m.lhs.descriptor, m.rhs.descriptor, src,
-                       0, m.distance, anchored, None)
+                       0, m.distance, anchored, origin, None)
 
 
-def change_set(matches: Iterable[Match]) -> list[ClassChange]:
-    """All verdicts, ranked most-review-worthy first (stable within a kind by
-    descending magnitude, then source file for determinism)."""
+def change_set(
+    matches: Iterable[Match],
+    dev_package: Union[str, _Iterable[str], None] = None,
+) -> list[ClassChange]:
+    """All verdicts, ranked most-review-worthy first: by kind (real edits first),
+    then **origin** (the developer's own `app` code above `library` churn), then
+    descending magnitude, then source file for determinism. `dev_package` — one
+    prefix or several (multi-root apps), e.g. from `--app-package`/`--package` or
+    the manifest — drives the app/library split; without it only known libraries
+    are demoted."""
     matches = list(matches)
     class_map = build_class_map(matches)
-    changes = [classify_match(m, class_map) for m in matches]
-    changes.sort(key=lambda c: (_KIND_RANK.get(c.kind, 9), -c.magnitude,
+    dev_prefix = dev_descriptor_prefixes(dev_package)
+    changes = [classify_match(m, class_map, dev_prefix) for m in matches]
+    changes.sort(key=lambda c: (_KIND_RANK.get(c.kind, 9),
+                                ORIGIN_RANK.get(c.origin, 1), -c.magnitude,
                                 c.source_file or "", c.lhs or c.rhs or ""))
     return changes
 
@@ -126,6 +144,7 @@ def render_json(changes: Iterable[ClassChange]) -> str:
             "magnitude": c.magnitude,
             "match_distance": round(c.match_distance, 4),
             "anchored": c.anchored,
+            "origin": c.origin,
         }
         if c.delta is not None:
             row["delta"] = {
@@ -143,30 +162,46 @@ def render_json(changes: Iterable[ClassChange]) -> str:
                       indent=2, sort_keys=True)
 
 
+_ORIGIN_TAG = {"app": "app", "library": "lib", "unknown": "?"}
+
+
 def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
-    """Human triage summary: counts, then the top modified/added/removed."""
+    """Human triage summary: counts (with an app-only breakdown), then the top
+    modified/added/removed — ordered app-first, each tagged with its origin."""
     changes = list(changes)
     c = counts(changes)
+    app = counts([x for x in changes if x.origin == "app"])
+    any_app = any(x.origin == "app" for x in changes)
     lines = [
         "change summary: "
         + "  ".join(f"{k}={c.get(k, 0)}" for k in
                     ("modified", "added", "removed", "cosmetic", "unchanged")),
     ]
+    if any_app:
+        lines.append(
+            "  app-only:     "
+            + "  ".join(f"{k}={app.get(k, 0)}" for k in
+                        ("modified", "added", "removed", "cosmetic", "unchanged"))
+        )
+
+    def _tag(x: ClassChange) -> str:
+        return f"[{_ORIGIN_TAG.get(x.origin, '?'):>3}]"
+
     modified = [x for x in changes if x.kind == "modified"][:top]
     if modified:
-        lines.append(f"\ntop modified (by magnitude):")
+        lines.append("\ntop modified (app-first, then by magnitude):")
         for x in modified:
             src = x.source_file or x.lhs or "?"
             anc = " [anchored]" if x.anchored else ""
-            lines.append(f"  [{x.magnitude:4d}] {src}  {x.summary}{anc}")
+            lines.append(f"  {_tag(x)} [{x.magnitude:4d}] {src}  {x.summary}{anc}")
     added = [x for x in changes if x.kind == "added"][:top]
     if added:
-        lines.append(f"\ntop added (by size):")
+        lines.append("\ntop added (app-first, then by size):")
         for x in added:
-            lines.append(f"  [{x.magnitude:4d} instr] {x.source_file or x.rhs}")
+            lines.append(f"  {_tag(x)} [{x.magnitude:4d} instr] {x.source_file or x.rhs}")
     removed = [x for x in changes if x.kind == "removed"][:top]
     if removed:
-        lines.append(f"\ntop removed (by size):")
+        lines.append("\ntop removed (app-first, then by size):")
         for x in removed:
-            lines.append(f"  [{x.magnitude:4d} instr] {x.source_file or x.lhs}")
+            lines.append(f"  {_tag(x)} [{x.magnitude:4d} instr] {x.source_file or x.lhs}")
     return "\n".join(lines)

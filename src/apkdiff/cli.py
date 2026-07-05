@@ -41,6 +41,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "only on small, genuinely ambiguous pools; greedy everywhere else)",
     )
     p.add_argument("--progress", action="store_true", help="print per-pool / per-batch diff progress to stderr")
+    p.add_argument("--app-package", metavar="PREFIX", action="append", default=None, help="package prefix(es) owned by the app, for provenance ranking only (does NOT filter scope; repeatable for multi-root apps). Defaults to --package, else the manifest package. App changes rank above library churn in --changes.")
     p.add_argument("--changes", action="store_true", help="output a semantic change report (added/removed/modified/cosmetic, ranked by review-worthiness) instead of the raw class-match list")
     p.add_argument("--changes-json", metavar="OUT", type=Path, help="write the semantic change report as machine-consumable JSON to this path")
     p.add_argument("--json", metavar="OUT", type=Path, help="also write JSON report to this path")
@@ -93,7 +94,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.changes or args.changes_json:
         from . import changes as changes_mod
 
-        change_list = changes_mod.change_set(matches)
+        # Provenance labeling wants the app's own package prefix(es). Precedence:
+        # explicit --app-package (multi-root ok) > --package scope > manifest
+        # package. Labeling never filters scope, so app/library ranking works on
+        # a full diff without forcing the user to narrow it.
+        label_packages = args.app_package or ([package] if package else None)
+        if not label_packages and lhs_app.manifest is not None and lhs_app.manifest.package:
+            label_packages = [lhs_app.manifest.package]
+        if label_packages:
+            print(f"provenance packages: {label_packages}", file=sys.stderr)
+        change_list = changes_mod.change_set(matches, dev_package=label_packages)
         if args.progress:
             from collections import Counter
 
