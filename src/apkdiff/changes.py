@@ -63,8 +63,17 @@ class ClassChange:
 
     @property
     def summary(self) -> str:
-        if self.kind == "modified" and self.delta is not None:
-            return self.delta.summary()
+        if self.kind == "modified":
+            parts = []
+            if self.delta is not None and self.delta.is_semantic:
+                parts.append(self.delta.summary())
+            n_add = sum(1 for md in self.method_deltas if md.status == "added")
+            n_del = sum(1 for md in self.method_deltas if md.status == "deleted")
+            if n_add:
+                parts.append(f"+{n_add} methods")
+            if n_del:
+                parts.append(f"-{n_del} methods")
+            return ", ".join(parts) if parts else "structure changed"
         if self.kind in ("added", "removed"):
             return f"{self.magnitude} instructions"
         return self.kind
@@ -105,11 +114,17 @@ def classify_match(
     anchored = m.breakdown.get("anchored") == 1.0
     src = m.lhs.source_file or m.rhs.source_file
     origin = origin_of(m.lhs, dev_prefix)  # older side names the class we review
-    if delta.is_semantic:
-        method_deltas = localize_method_changes(m.method_matches)
+    method_deltas = localize_method_changes(m.method_matches)
+    # A method added/removed is a real structural change even if it moved no
+    # class-level semantic feature (e.g. a new method with no framework calls) —
+    # so it counts as "modified", not cosmetic. (A modified method whose call
+    # set didn't move is *not* localized and stays cosmetic; see
+    # localize_method_changes.)
+    n_structural = sum(1 for md in method_deltas if md.status in ("added", "deleted"))
+    if delta.is_semantic or n_structural:
         return ClassChange("modified", m.lhs.descriptor, m.rhs.descriptor, src,
-                           delta.magnitude, m.distance, anchored, origin, delta,
-                           method_deltas)
+                           delta.magnitude + n_structural, m.distance, anchored,
+                           origin, delta, method_deltas)
     kind = "unchanged" if m.distance >= _IDENTICAL else "cosmetic"
     return ClassChange(kind, m.lhs.descriptor, m.rhs.descriptor, src,
                        0, m.distance, anchored, origin, None)
