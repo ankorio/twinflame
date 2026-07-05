@@ -1,7 +1,17 @@
 """apkdiff — DEX-level Android APK class-diffing engine."""
 
 from .api import diff, filter, load
-from .model import App, Class, DiffOptions, Field, Match, Method, Pool, Signature
+from .model import (
+    App,
+    Class,
+    DiffOptions,
+    Field,
+    Match,
+    Method,
+    MethodMatch,
+    Pool,
+    Signature,
+)
 
 __all__ = [
     "App",
@@ -10,6 +20,7 @@ __all__ = [
     "Field",
     "Match",
     "Method",
+    "MethodMatch",
     "Pool",
     "Signature",
     "diff",

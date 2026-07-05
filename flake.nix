@@ -58,6 +58,7 @@
         pyDeps = ps: with ps; [
           androguard
           numpy
+          rapidfuzz
         ];
 
         pyTestDeps = ps: with ps; [

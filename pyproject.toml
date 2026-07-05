@@ -19,6 +19,7 @@ classifiers = [
 dependencies = [
     "androguard>=4.1",
     "numpy>=1.26",
+    "rapidfuzz>=3.14",
 ]
 
 [project.optional-dependencies]

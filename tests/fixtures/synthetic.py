@@ -33,6 +33,8 @@ class MethodSpec:
     xref_count: int = 0
     bytecode: bytes = b"\x0e"  # return-void
     instr_count: int = 1
+    calls: tuple[str, ...] = ()
+    instantiates: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,8 @@ class ClassSpec:
     methods: tuple[MethodSpec, ...] = ()
     fields: tuple[FieldSpec, ...] = ()
     strings: tuple[str, ...] = ()
+    superclass: str | None = None
+    interfaces: tuple[str, ...] = ()
 
 
 def _descriptor_to_package_name(desc: str) -> tuple[str, str]:
@@ -71,6 +75,8 @@ def make_method(spec: MethodSpec) -> Method:
         bytecode=bc,
         instr_count=spec.instr_count if spec.instr_count else len(bc),
         opcode_xor=opcode_xor,
+        calls=spec.calls,
+        instantiates=spec.instantiates,
     )
 
 
@@ -92,6 +98,8 @@ def make_class(spec: ClassSpec) -> Class:
         methods=tuple(make_method(m) for m in spec.methods),
         fields=tuple(make_field(f) for f in spec.fields),
         strings=spec.strings,
+        superclass=spec.superclass,
+        interfaces=spec.interfaces,
     )
 
 
@@ -204,6 +212,8 @@ def mutate_method_bytecode(c: Class, method_name: str, new_bytecode: bytes) -> C
                     bytecode=new_bytecode,
                     instr_count=len(new_bytecode),
                     opcode_xor=opcode_xor,
+                    calls=m.calls,
+                    instantiates=m.instantiates,
                 )
             )
         else:
@@ -220,4 +230,6 @@ def mutate_method_bytecode(c: Class, method_name: str, new_bytecode: bytes) -> C
         methods=tuple(new_methods),
         fields=c.fields,
         strings=c.strings,
+        superclass=c.superclass,
+        interfaces=c.interfaces,
     )
