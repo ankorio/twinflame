@@ -207,6 +207,13 @@ def test_filter_min_confidence_drops_only_low_modified():
     assert set(filter_min_confidence([low, high], "low")) == {low, high}
 
 
+def test_json_carries_schema_version():
+    from apkdiff.changes import CHANGES_SCHEMA_VERSION
+    doc = json.loads(render_json(change_set([Match(_cls(), None, 0.0)])))
+    assert doc["schema_version"] == CHANGES_SCHEMA_VERSION
+    assert set(doc) == {"schema_version", "summary", "changes"}
+
+
 def test_counts_helper():
     a = _cls(methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),))
     b = _cls(descriptor="Lx/y;", methods=(_m_call("Landroid/os/Bundle;-><init>()V"),))

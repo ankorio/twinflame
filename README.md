@@ -8,6 +8,12 @@ Use cases:
 - **Repackaging / mod analysis** — find injected code that replaces vendor logic with no-ops or hostile callbacks.
 - **Deobfuscation correlation** — pair classes across Proguard-renamed builds.
 
+## Documentation
+
+- **[docs/using-apkdiff.md](docs/using-apkdiff.md)** — task-oriented guide: the three use cases, reading the change report, feeding the mapping to jadx/retrace.
+- **[docs/change-report-schema.md](docs/change-report-schema.md)** — the versioned `--changes-json` output format (for downstream tooling).
+- **[docs/how-it-works.md](docs/how-it-works.md)** — how the pipeline works internally, with diagrams.
+
 ## Pipeline
 
 1. **Multi-DEX merge** — every `classes*.dex` is unioned into one logical view (first-wins on descriptor, matching ART). The loader also records each method's call targets + incoming-xref count and each class's string constants, which feed anchoring.
@@ -20,25 +26,32 @@ Optional Redex pre-pass strips junk-instruction obfuscation (`LocalDcePass` + `R
 
 ## Installation
 
-apkdiff is distributed as a [Nix flake](https://nixos.wiki/wiki/Flakes). All runtime dependencies — Python, androguard, numpy, rapidfuzz, Redex (built from source), JADX — are pinned in [flake.lock](flake.lock), so a clean checkout reproduces an identical environment.
+### pip (recommended)
 
-**1. Install Nix** (skip if you already have it with flakes enabled):
+Requires Python ≥ 3.11. Runtime deps (androguard, numpy, rapidfuzz) install automatically.
 
 ```sh
-# Determinate Systems installer — turns on flakes by default, easiest path
+git clone https://github.com/ankorio/twinflame && cd twinflame
+python -m venv .venv && . .venv/bin/activate
+pip install .            # or: pip install -e '.[test]' for a dev checkout
+apkdiff --help           # console entry point is installed
+```
+
+That's everything for the core tool. Two features need external programs that aren't Python
+packages: `--normalize` needs **Redex** on `PATH` (optional; only for junk-instruction
+normalization), and applying a recovered `mapping.txt` needs your own decompiler (e.g. **JADX**).
+
+### Nix flake (reproducible environment)
+
+For a fully-pinned environment (Python + all deps + Redex built from source + JADX), use the
+[Nix flake](https://nixos.wiki/wiki/Flakes) — everything is locked in [flake.lock](flake.lock):
+
+```sh
+# Install Nix with flakes (Determinate Systems installer is easiest):
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+git clone https://github.com/ankorio/twinflame && cd twinflame
+nix develop            # drops you in a shell with apkdiff + Redex + JADX
 ```
-
-Alternative: the [official installer](https://nixos.org/download) — then enable flakes by adding `experimental-features = nix-command flakes` to `~/.config/nix/nix.conf`.
-
-**2. Clone the repo**:
-
-```sh
-git clone https://github.com/ankorio/twinflame
-cd apkdiff
-```
-
-That's it — there's nothing else to install.
 
 ## Running
 

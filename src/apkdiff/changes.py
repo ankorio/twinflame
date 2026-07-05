@@ -41,6 +41,9 @@ from .features import (
 from .model import Class, Match
 from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
+# Bump on any breaking change to the --changes-json shape (see docs/change-report-schema.md).
+CHANGES_SCHEMA_VERSION = 1
+
 # Review-worthiness ordering: real edits first, cosmetic/unchanged last.
 _KIND_RANK = {"modified": 0, "added": 1, "removed": 2, "cosmetic": 3, "unchanged": 4}
 # Structural distance at/above which a paired class with no semantic delta is
@@ -211,8 +214,12 @@ def render_json(changes: Iterable[ClassChange]) -> str:
                 for md in c.method_deltas
             ]
         rows.append(row)
-    return json.dumps({"summary": counts(changes), "changes": rows},
-                      indent=2, sort_keys=True)
+    doc = {
+        "schema_version": CHANGES_SCHEMA_VERSION,
+        "summary": counts(changes),
+        "changes": rows,
+    }
+    return json.dumps(doc, indent=2, sort_keys=True)
 
 
 _ORIGIN_TAG = {"app": "app", "library": "lib", "unknown": "?"}
