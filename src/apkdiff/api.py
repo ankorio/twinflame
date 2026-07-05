@@ -127,9 +127,13 @@ def _diff_parallel(
 
 
 def _apply_filters(classes: list[Class], opts: DiffOptions) -> list[Class]:
+    from .boilerplate import is_boilerplate
+
     out: list[Class] = []
     for c in classes:
         if opts.synthetic_skipping and c.is_synthetic:
+            continue
+        if opts.skip_boilerplate and is_boilerplate(c):
             continue
         if opts.inner_skipping and c.is_inner:
             continue

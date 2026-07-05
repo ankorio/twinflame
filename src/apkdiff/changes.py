@@ -60,6 +60,11 @@ class ClassChange:
     origin: str                 # "app" / "library" / "unknown" (review priority)
     delta: Optional[FeatureDelta]  # only for "modified"
     method_deltas: tuple[MethodDelta, ...] = ()  # per-method localization (modified)
+    # "high" | "low". A modified verdict is "low" when it rests *only* on
+    # framework-call churn in non-app code — the cross-toolchain-noise signature
+    # (different R8 versions relocate calls between classes; measured 95% of the
+    # false-modified on a same-source cross-R8 rebuild). Everything else is "high".
+    confidence: str = "high"
 
     @property
     def summary(self) -> str:
@@ -122,9 +127,19 @@ def classify_match(
     # localize_method_changes.)
     n_structural = sum(1 for md in method_deltas if md.status in ("added", "deleted"))
     if delta.is_semantic or n_structural:
+        # Confidence: content-backed (string/type) or structural (method add/del)
+        # deltas are toolchain-stable; a *call-only* delta in non-app code is the
+        # cross-R8-version noise signature, so demote it to "low".
+        content_backed = bool(
+            delta.strings_added or delta.strings_removed
+            or delta.refs_added or delta.refs_removed
+            or delta.app_refs_added or delta.app_refs_removed
+        )
+        call_only = not content_backed and n_structural == 0
+        confidence = "low" if (call_only and origin != "app") else "high"
         return ClassChange("modified", m.lhs.descriptor, m.rhs.descriptor, src,
                            delta.magnitude + n_structural, m.distance, anchored,
-                           origin, delta, method_deltas)
+                           origin, delta, method_deltas, confidence)
     kind = "unchanged" if m.distance >= _IDENTICAL else "cosmetic"
     return ClassChange(kind, m.lhs.descriptor, m.rhs.descriptor, src,
                        0, m.distance, anchored, origin, None)
@@ -145,7 +160,8 @@ def change_set(
     dev_prefix = dev_descriptor_prefixes(dev_package)
     changes = [classify_match(m, class_map, dev_prefix) for m in matches]
     changes.sort(key=lambda c: (_KIND_RANK.get(c.kind, 9),
-                                ORIGIN_RANK.get(c.origin, 1), -c.magnitude,
+                                ORIGIN_RANK.get(c.origin, 1),
+                                0 if c.confidence == "high" else 1, -c.magnitude,
                                 c.source_file or "", c.lhs or c.rhs or ""))
     return changes
 
@@ -169,6 +185,7 @@ def render_json(changes: Iterable[ClassChange]) -> str:
             "match_distance": round(c.match_distance, 4),
             "anchored": c.anchored,
             "origin": c.origin,
+            "confidence": c.confidence,
         }
         if c.delta is not None:
             row["delta"] = {
@@ -199,6 +216,15 @@ def render_json(changes: Iterable[ClassChange]) -> str:
 
 
 _ORIGIN_TAG = {"app": "app", "library": "lib", "unknown": "?"}
+_CONFIDENCE_RANK = {"high": 0, "low": 1}
+
+
+def filter_min_confidence(changes: Iterable[ClassChange], min_confidence: str) -> list[ClassChange]:
+    """Drop change verdicts below `min_confidence` ("high" | "low"). Only ever
+    removes *low-confidence modified* rows (call-only churn in non-app code);
+    added/removed/cosmetic/unchanged are always "high". `"low"` keeps everything."""
+    floor = _CONFIDENCE_RANK.get(min_confidence, 1)
+    return [c for c in changes if _CONFIDENCE_RANK.get(c.confidence, 0) <= floor]
 
 
 def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
@@ -208,11 +234,18 @@ def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
     c = counts(changes)
     app = counts([x for x in changes if x.origin == "app"])
     any_app = any(x.origin == "app" for x in changes)
+    hi_mod = sum(1 for x in changes if x.kind == "modified" and x.confidence == "high")
+    lo_mod = sum(1 for x in changes if x.kind == "modified" and x.confidence == "low")
     lines = [
         "change summary: "
         + "  ".join(f"{k}={c.get(k, 0)}" for k in
                     ("modified", "added", "removed", "cosmetic", "unchanged")),
     ]
+    if lo_mod:
+        lines.append(
+            f"  modified confidence: high={hi_mod}  low={lo_mod} "
+            f"(low = call-only churn in non-app code, likely cross-toolchain noise)"
+        )
     if any_app:
         lines.append(
             "  app-only:     "
@@ -225,11 +258,12 @@ def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
 
     modified = [x for x in changes if x.kind == "modified"][:top]
     if modified:
-        lines.append("\ntop modified (app-first, then by magnitude):")
+        lines.append("\ntop modified (app-first, high-confidence first, then by magnitude):")
         for x in modified:
             src = x.source_file or x.lhs or "?"
             anc = " [anchored]" if x.anchored else ""
-            lines.append(f"  {_tag(x)} [{x.magnitude:4d}] {src}  {x.summary}{anc}")
+            lo = " [low-conf]" if x.confidence == "low" else ""
+            lines.append(f"  {_tag(x)} [{x.magnitude:4d}] {src}  {x.summary}{anc}{lo}")
             for md in x.method_deltas[:3]:  # localize to the top changed methods
                 lines.append(f"          - {md.name}{md.descriptor}: {md.summary()}")
     added = [x for x in changes if x.kind == "added"][:top]

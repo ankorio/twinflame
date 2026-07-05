@@ -197,6 +197,9 @@ class DiffOptions:
     inner_skipping: bool = False
     external_skipping: bool = False
     synthetic_skipping: bool = True
+    # Skip generated structural twins (tiny Comparator lambdas, etc.) that only
+    # collide in the matcher and flood the change report. See boilerplate.py.
+    skip_boilerplate: bool = True
     find_obfuscated_packages: bool = False
     # Skip classes with fewer than this many total instructions. Lowered 5->2
     # after measuring across corpora (see eval/corpus/README.md): the old 5

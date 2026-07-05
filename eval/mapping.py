@@ -22,13 +22,42 @@ _CLASS_LINE_SEP = " -> "
 # Kotlin coroutine continuation bodies), so excluding them would throw away
 # exactly the classes recall improvements should be measured against.
 _SYNTHETIC_NAME_MARKERS = ("$$ExternalSynthetic", "$$Lambda$")
+# Generated structural twins — inherently ambiguous, no reviewable logic, and
+# not what a change reviewer cares about (see boilerplate.py). Excluded from the
+# oracle so accuracy reflects real app-logic classes. Detected by *original*
+# name here (mapping.txt side); the matcher skips what it can detect structurally.
+_COMPARATOR_MARKERS = (
+    "$$inlined$sortedBy", "$$inlined$sortByDescending", "$$inlined$sortBy",
+    "$$inlined$compareBy", "$$inlined$thenBy", "$$inlined$thenComparator",
+    "$$inlined$sortedByDescending",
+)
+
+
+def _simple_name(fqcn: str) -> str:
+    return fqcn.rsplit(".", 1)[-1]
+
+
+def is_generated_boilerplate(fqcn: str) -> bool:
+    """`R`/`R$*` resource classes, `*Binding` ViewBinding/DataBinding holders,
+    and Kotlin generated comparators — by original class name."""
+    seg = _simple_name(fqcn)
+    if seg == "R" or seg.startswith("R$"):
+        return True
+    if seg.endswith("Binding") or seg.endswith("BindingImpl"):
+        return True
+    if any(m in fqcn for m in _COMPARATOR_MARKERS):
+        return True
+    return False
 
 
 def is_synthetic_like(fqcn: str) -> bool:
     """Heuristic: does this donor-side class name look like compiler-generated
     bookkeeping rather than real logic worth grading recall against?
     """
-    return any(marker in fqcn for marker in _SYNTHETIC_NAME_MARKERS)
+    return (
+        any(marker in fqcn for marker in _SYNTHETIC_NAME_MARKERS)
+        or is_generated_boilerplate(fqcn)
+    )
 
 
 # R8 records classes it *deleted* (dead-code shrinking) in mapping.txt with a

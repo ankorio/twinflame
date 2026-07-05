@@ -32,6 +32,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-instr", type=int, default=DiffOptions().min_inst_size_threshold, help="skip classes with fewer than N total instructions")
     p.add_argument("--skip-synthetic", dest="skip_synthetic", action="store_true", default=True)
     p.add_argument("--no-skip-synthetic", dest="skip_synthetic", action="store_false")
+    p.add_argument("--keep-boilerplate", dest="skip_boilerplate", action="store_false", default=True, help="keep generated structural twins (tiny Comparator lambdas etc.); by default they are skipped as review noise")
     p.add_argument("--skip-inner", action="store_true", help="skip inner classes (name contains '$')")
     p.add_argument("--skip-external", action="store_true", help="skip external/framework classes (no bytecode)")
     p.add_argument("--find-obfuscated", action="store_true", help="route obfuscated-looking packages into a single fallback pool")
@@ -45,6 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--progress", action="store_true", help="print per-pool / per-batch diff progress to stderr")
     p.add_argument("--app-package", metavar="PREFIX", action="append", default=None, help="package prefix(es) owned by the app, for provenance ranking only (does NOT filter scope; repeatable for multi-root apps). Defaults to --package, else the manifest package. App changes rank above library churn in --changes.")
     p.add_argument("--changes", action="store_true", help="output a semantic change report (added/removed/modified/cosmetic, ranked by review-worthiness) instead of the raw class-match list")
+    p.add_argument("--min-confidence", choices=("high", "low"), default="low", help="drop low-confidence 'modified' verdicts (call-only churn in non-app code, likely cross-toolchain noise). 'low' (default) keeps everything; 'high' shows only trustworthy changes")
     p.add_argument("--changes-json", metavar="OUT", type=Path, help="write the semantic change report as machine-consumable JSON to this path")
     p.add_argument("--json", metavar="OUT", type=Path, help="also write JSON report to this path")
     p.add_argument("--deobfuscation-map", metavar="OUT", type=Path, help="write a ProGuard mapping.txt that renames apk2's obfuscated classes using names recovered from matched apk1 classes (cross-version propagation)")
@@ -89,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         "inner_skipping": args.skip_inner,
         "external_skipping": args.skip_external,
         "synthetic_skipping": args.skip_synthetic,
+        "skip_boilerplate": args.skip_boilerplate,
         "find_obfuscated_packages": args.find_obfuscated,
         "min_inst_size_threshold": args.min_instr,
         "top_match_threshold": args.neighbors,
@@ -120,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         if label_packages:
             print(f"provenance packages: {label_packages}", file=sys.stderr)
         change_list = changes_mod.change_set(matches, dev_package=label_packages)
+        if args.min_confidence != "low":
+            change_list = changes_mod.filter_min_confidence(change_list, args.min_confidence)
         if args.progress:
             from collections import Counter
 

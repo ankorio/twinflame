@@ -20,6 +20,61 @@ The buildable OSS apps are the important unlock: because we control the build we
 `mapping.txt` oracle for free, **and** we can rebuild the same source to measure the
 change-detection *noise floor* (see `../../plans/change-detection-roadmap.md`, E-2).
 
+## Benchmark snapshot (2026-07-05, `--assignment auto`, boilerplate filter on)
+
+Full-suite run across every built corpus. Details + methodology for each are in the
+sections below; this is the at-a-glance scoreboard.
+
+| Corpus | Setup | Oracle | Precision | Recall | F1 |
+|---|---|---|---|---|---|
+| Contacts 1.5.0→1.6.0 | release-vs-release (UC1) | mapping-join | 1.000 | 0.949 | 0.974 |
+| Contacts 1.4.0→1.6.0 | release-vs-release (UC1) | mapping-join | 1.000 | 0.948 | 0.973 |
+| Contacts 1.3.0→1.6.0 | release-vs-release, **major span** | mapping-join | 0.986 | 0.935 | 0.960 |
+| Clock 2.30→2.31 | release-vs-release (UC1) | mapping-join | 0.996 | 0.922 | 0.957 |
+| Clock rebuild a vs b | **same source ×2 (E-2 noise floor)** | mapping-join | **1.000** | 0.923 | 0.960 |
+| CalculatorM3 | debug↔release (UC3 rename) | mapping.txt | 0.931 | 0.677 | 0.784 |
+| Clock optimize↔strict | cross-obfuscation (layout) | mapping-join | 1.000 | 0.923 | 0.960 |
+| Clock lax↔optimize | cross-obfuscation (**optimization gap**) | mapping-join | 0.982 | 0.619 | 0.759 |
+
+**Reading it:**
+- **UC1 release-vs-release is the headline: P≈1.0, R 0.92–0.95** on two independent apps,
+  holding across a major (3-release) span.
+- **E-2 noise floor:** on *identical* source, precision is **perfect** (no false matches) but
+  recall tops out ~0.92 — a residual structural-twin ceiling the filter can't reach. (This is
+  the *matching* floor; the *change-classifier* floor is V1-B, still to calibrate.)
+- **CalculatorM3 (debug↔release)** is the pessimistic bound — it conflates rename with a large
+  optimization gap the real UCs don't have (roadmap: ~3× harder), so R 0.68 is expected.
+- **Obfuscation axis:** layout obfuscation (repackage/access-mod) is matcher-invariant (F 0.96);
+  the **optimization gap** (lax↔optimize inline/merge) is the real difficulty (F 0.76) — the
+  regime aggressively-optimized apps (e.g. Telegram) fall into.
+
+Two runs have no P/R oracle (org-released binaries ship no `mapping.txt`) and are assessed by
+running the `--changes` report + spot-check:
+- **Private benchmark app** (cartera 1.8.2→1.9.1, ~2.5-mo cross-toolchain gap): runs; report =
+  `modified 1276 / added 5012 / removed 5008 / cosmetic 286 / unchanged 277`. The large symmetric
+  add/remove is library churn + toolchain drift — what `--app-package` + the V1-B noise floor tame.
+- **Telegram 12.7.2→12.8.3** (~145 MB, ~40 k classes/side): see the "Large real-world app" note below.
+
+### Large real-world app — Telegram 12.7.2 → 12.8.3 (scale + qualitative)
+
+Official APKPure builds (no `mapping.txt`), the biggest target run to date. Validates that the
+pipeline scales and that the change report stays reviewable on a real, adjacent-version diff.
+
+- **Scale/perf:** 39,108 → 40,090 classes/side, 145 MB APKs. **Load 123 s + diff 94 s ≈ 3.5 min**
+  total (`--jobs` = all cores; 517 pools compared, largest 2457×2467). 21,723 matches.
+- **Change report (`--changes --app-package org.telegram`):**
+  `modified 394 / added 888 / removed 295 / cosmetic 497 / unchanged 19,649`; **app-only**
+  `modified 384 / added 282 / removed 135 / cosmetic 414 / unchanged 10,436`. i.e. of ~40 k
+  classes the reviewer is handed **~384 app classes to look at** — the rest are unchanged/
+  library/cosmetic. That triage ratio is the whole point of the tool.
+- **Localization on real code is directly actionable** (Telegram keeps app class/method names,
+  only strips `SourceFile`): e.g. `TelegramMediaSession.<init> +18/-8 calls`,
+  `ArticleViewer.checkLayoutForLinks +15 calls`, `applyQueueFor +7/-8 calls`. Anchoring held
+  across the version bump (`[anchored]` matches).
+- **Caveat:** Telegram's app code isn't name-obfuscated, so this exercises *scale* and the
+  *change classifier*, not rename recovery. There's no P/R here (no oracle) — building from
+  source at two tags would add one.
+
 ## Build recipe (rename-recovery corpus: one version, R8-off vs R8-on)
 
 The existing scorer (`python -m eval.cli donor.apk target.apk mapping.txt`) wants a
@@ -311,23 +366,32 @@ history needed — shallow clones work). `--package org.fossify.contacts` scopes
 
 ### Fossify Contacts degradation curve (2026-07-05), all vs 1.6.0, `--package org.fossify.contacts`
 
-| Older tag → 1.6.0 | Releases apart | commons | Precision | Recall | F1 |
-|---|---|---|---|---|---|
-| 1.5.0 | 1 (adjacent) | 5.12 → 6.1 | **1.000** | 0.901 | 0.948 |
-| 1.4.0 | 2 | 5.7 → 6.1 | **1.000** | 0.867 | 0.929 |
-| 1.3.0 | 3 (**major**, ~4 mo) | 5.3 → 6.1 | 0.924 | 0.813 | 0.865 |
+Two numbers per row: **before** the boilerplate filter (grading *all* classes incl. generated
+twins) → **after** (V1-A: generated boilerplate excluded from the oracle, and the matcher skips
+tiny `Comparator` twins). The "after" is the honest real-app-logic accuracy.
 
-Monotonic degradation; **precision holds at 1.00 until the largest gap**, then 0.92.
+| Older tag → 1.6.0 | Releases | commons | Precision | Recall | F1 | (after: gradable) |
+|---|---|---|---|---|---|---|
+| 1.5.0 | 1 (adjacent) | 5.12 → 6.1 | 1.000 → **1.000** | 0.901 → **0.949** | 0.948 → **0.974** | 78 |
+| 1.4.0 | 2 | 5.7 → 6.1 | 1.000 → **1.000** | 0.867 → **0.948** | 0.929 → **0.973** | 77 |
+| 1.3.0 | 3 (**major**, ~4 mo) | 5.3 → 6.1 | 0.924 → **0.986** | 0.813 → **0.935** | 0.865 → **0.960** | 77 |
 
-**The errors are dominated by generated boilerplate twins, not app logic.** Characterizing
-the 1.3.0→1.6.0 misses (10 FP / 28 FN): Kotlin comparator lambdas (`$$inlined$sortedBy$N` —
-structurally identical `Comparator`s), ViewBinding classes (`ItemEditGroupBinding` ↔
-`ItemEditEmailBinding`, near-identical generated code), and `R$id`/`R$string`/… resource
-classes (all-static-int, maximally ambiguous). Only ~1–2 (`VcfExporter$ExportResult`) are
-arguable real-logic classes — so **real app-logic matching stays ~99% even on a major update**;
-the F1 drop is inherently-ambiguous generated classes a change reviewer doesn't care about.
-Actionable follow-up: extend the synthetic/boilerplate filter (`eval/mapping.is_synthetic_like`
-and the matcher's skip set) to also drop `*Binding`, `R$*`, and `$$inlined$sorted*` twins.
+**Before the filter, the errors were almost entirely generated-boilerplate twins, not app
+logic.** Characterizing the unfiltered 1.3.0→1.6.0 misses (10 FP / 28 FN): Kotlin comparator
+lambdas (`$$inlined$sortedBy$N` — structurally identical `Comparator`s), ViewBinding classes
+(`ItemEditGroupBinding` ↔ `ItemEditEmailBinding`), and `R$id`/`R$string`/… resource classes
+(all-static-int, maximally ambiguous). Only ~1–2 were real-logic classes.
+
+**After the filter (V1-A landed 2026-07-05):** the curve is **nearly flat** — F1 stays ≥0.96
+even across the major span, and precision is ≥0.99 everywhere. The residual 1 FP / 4–5 FN are
+genuine cross-version refactors of real classes (irreducible version-change signal), not tool
+error. Filter is two-sided: `apkdiff/boilerplate.py` skips tiny `java/util/Comparator`
+implementers in the matcher (obfuscation-robust; R8 keeps the framework interface), and
+`eval/mapping.is_generated_boilerplate` excludes `R`/`R$*`, `*Binding`, and `$$inlined$sort*`
+by original name from the oracle. Disable the matcher side with `--keep-boilerplate`.
+*Known limitation:* in a fully-obfuscated build R8 strips the ViewBinding interface and rewrites
+`SourceFile`, so `*Binding`/`R` twins aren't structurally detectable by the matcher (only the
+oracle excludes them, by name) — a field-type-profile heuristic could catch them later.
 
 **Build note:** tags ≤ 1.2.0 (commons ≤ 3.0.0) no longer build — a dead transitive jitpack
 artifact (`com.github.duolingo:rtl-viewpager:940f12724f`, 404 everywhere); dropped in commons
@@ -340,14 +404,29 @@ Ground-truth for the *classifier* (not just matching) is the synthetic-mutation 
 two-tag corpus above adds *realism* for the matcher; per-touched-class change ground truth from
 the git diff between tags is still open (needs a non-shallow clone).
 
-## Noise-floor calibration (E-2 — needs same-source rebuilds)
+## Noise-floor calibration (E-2, V1-B) — DONE 2026-07-05
 
-Build the *same* commit twice (and `minifyEnabled` off vs on, and two AGP versions) to
-measure how much two builds of identical source differ per feature. Feeds the per-feature
-change-detection floors. Not built yet.
+The change classifier's `modified` verdict must not fire on *build* differences. Measured the
+noise floor by running `--changes` on **same-source** pairs (any `modified` = pure noise):
 
-## Noise-floor calibration (E-2 — needs same-source rebuilds)
+| Same-source pair | What differs | modified (all noise) |
+|---|---|---|
+| Clock rebuild a vs b | nothing (same toolchain) | **0** (R8 deterministic → byte-identical APKs) |
+| Clock optimize vs strict | layout obfuscation (repackage/access-mod) | **0** |
+| Contacts 1.5.0 @ AGP 8.11.1 vs 8.10.1 | **R8 version** (both optimized) | 450 — but **0 in app code** |
+| Clock lax vs optimize | optimization on↔off | 1134 (unrealistic extreme; nobody ships `-dontoptimize`) |
 
-Build the *same* commit twice (and `minifyEnabled` off vs on, and two AGP versions) to
-measure how much two builds of identical source differ per feature. Feeds the per-feature
-change-detection floors. Not built yet.
+**The cross-R8-version noise (the realistic cross-toolchain case) has two clean signatures:**
+by **origin** it is 0 app / 331 library / 119 unknown (the app's own code is stable); by
+**delta type** it is **95% call-only framework-call churn** (different R8 versions relocate
+calls between classes via inlining — the Phase 0.4 effect), with 0 method-structural and only
+5% string/type. Magnitude does *not* separate noise from signal (median 4, up to 50; and 51% of
+*confirmed-real* changes are magnitude ≤2 — verified on Telegram against the source diff).
+
+**Mechanism (implemented):** `ClassChange.confidence` = `"low"` iff a `modified` is *call-only
+churn in non-app code*, else `"high"`; emitted in JSON, ranked high-first, filterable with
+`--min-confidence high` (default `low` = emit everything, "demote never drop"). Validated:
+`--min-confidence high` cuts the cross-R8 noise **450 → 23** (95% removed), keeps **100%** of the
+source-verified Telegram real changes (all app-origin), leaves same-source rebuilds at 0
+modified, and keeps the synthetic oracle at 9/9. A magnitude threshold was rejected (drops the
+many real small changes).

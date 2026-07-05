@@ -56,3 +56,17 @@ def test_does_not_flag_plain_anonymous_inner_class():
 
 def test_does_not_flag_ordinary_class():
     assert not is_synthetic_like("com.acme.MainActivity")
+
+
+def test_is_generated_boilerplate_names():
+    from eval.mapping import is_generated_boilerplate, is_synthetic_like
+    for name in ("com.acme.R", "com.acme.R$id", "com.acme.R$string",
+                 "com.acme.databinding.ItemEditGroupBinding",
+                 "com.acme.FragmentMainBindingImpl",
+                 "com.acme.ContextKt$getX$$inlined$sortedBy$1",
+                 "com.acme.ChooseDialog$special$$inlined$sortBy$2"):
+        assert is_generated_boilerplate(name), name
+        assert is_synthetic_like(name), name  # folded into the oracle filter
+    for name in ("com.acme.MainActivity", "com.acme.ScanViewModel$ensureModelLoaded$1",
+                 "com.acme.BindingContext", "com.acme.Renderer"):
+        assert not is_generated_boilerplate(name), name

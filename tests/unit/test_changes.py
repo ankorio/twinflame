@@ -8,6 +8,7 @@ from apkdiff.changes import (
     change_set,
     classify_match,
     counts,
+    filter_min_confidence,
     render_json,
     render_text,
 )
@@ -160,6 +161,50 @@ def test_method_localization_flows_into_report():
     assert row["methods"][0]["calls_added"] == ["Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"]
     txt = render_text(change_set([m]))
     assert "run()V:" in txt  # method sub-line rendered under the modified class
+
+
+def _call_change(desc_a, desc_b, dev=None):
+    a = _cls(descriptor=desc_a, methods=(_m_call("Landroid/util/Log;->d(Ljava/lang/String;)I"),))
+    b = _cls(descriptor=desc_b, methods=(_m_call("Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;"),))
+    return change_set([Match(a, b, 0.7)], dev_package=dev)[0]
+
+
+def test_confidence_low_for_call_only_churn_in_nonapp_code():
+    # library origin (androidx prefix), delta is only framework-call churn -> low
+    v = _call_change("Landroidx/work/W;", "Landroidx/work/W;")
+    assert v.kind == "modified" and v.origin == "library" and v.confidence == "low"
+
+
+def test_confidence_high_for_call_only_churn_in_app_code():
+    # same call-only delta, but app origin -> stays high (app changes are trusted)
+    v = _call_change("Lcom/acme/A;", "Lcom/acme/A;", dev="com.acme")
+    assert v.kind == "modified" and v.origin == "app" and v.confidence == "high"
+
+
+def test_confidence_high_when_content_backed_even_in_library():
+    # a string change is toolchain-stable -> high even for a library class
+    a = _cls(descriptor="Landroidx/x/Y;", strings=("old_flag",))
+    b = _cls(descriptor="Landroidx/x/Y;", strings=("new_flag",))
+    v = change_set([Match(a, b, 0.7)])[0]
+    assert v.kind == "modified" and v.confidence == "high"
+
+
+def test_confidence_high_for_method_structural_change():
+    a = _cls(descriptor="Landroidx/x/Z;")
+    b = _cls(descriptor="Landroidx/x/Z;")
+    am = syn.make_method(syn.MethodSpec(name="gone", calls=("Landroid/util/Log;->d(Ljava/lang/String;)I",)))
+    m = Match(a, b, 0.7, {}, (MethodMatch(lhs=am, rhs=None, score=0.0, status="deleted"),))
+    v = classify_match(m)
+    assert v.kind == "modified" and v.confidence == "high"  # method delete is structural
+
+
+def test_filter_min_confidence_drops_only_low_modified():
+    low = _call_change("Landroidx/work/W;", "Landroidx/work/W;")
+    high = _call_change("Lcom/acme/A;", "Lcom/acme/A;", dev="com.acme")
+    kept = filter_min_confidence([low, high], "high")
+    assert high in kept and low not in kept
+    # "low" keeps everything
+    assert set(filter_min_confidence([low, high], "low")) == {low, high}
 
 
 def test_counts_helper():
