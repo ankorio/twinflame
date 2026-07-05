@@ -302,12 +302,49 @@ choosing which build is lhs vs rhs.
 case; aggressive *optimization* (inline/merge) is the open one — which is the M3.1 territory, now
 measurable on demand across the strength axis instead of guessed at.
 
-## Version-change corpus (UC1, Phase 2 — needs two versions)
+## Version-change corpus (UC1) — cross-version matching over a widening gap
 
-Build **two adjacent release tags** of the same app (both R8-on). The change oracle is the
-**git diff between the two tags** mapped to touched classes; each build's `mapping.txt`
-lets us translate obfuscated names back to originals on both sides so a cross-version match
-is gradeable. Harness for this is Phase 2 (not built yet) — see the roadmap.
+`eval/corpus/build_xversion.sh <repo> <tagA> <tagB> assembleFossRelease <out> [gradle_ver]`
+builds two release tags (both R8-on) and stages `app.apk`+`mapping.txt`; `eval.xversion`
+grades matching by joining the two `mapping.txt`s on original class name (no connecting git
+history needed — shallow clones work). `--package org.fossify.contacts` scopes to app code.
+
+### Fossify Contacts degradation curve (2026-07-05), all vs 1.6.0, `--package org.fossify.contacts`
+
+| Older tag → 1.6.0 | Releases apart | commons | Precision | Recall | F1 |
+|---|---|---|---|---|---|
+| 1.5.0 | 1 (adjacent) | 5.12 → 6.1 | **1.000** | 0.901 | 0.948 |
+| 1.4.0 | 2 | 5.7 → 6.1 | **1.000** | 0.867 | 0.929 |
+| 1.3.0 | 3 (**major**, ~4 mo) | 5.3 → 6.1 | 0.924 | 0.813 | 0.865 |
+
+Monotonic degradation; **precision holds at 1.00 until the largest gap**, then 0.92.
+
+**The errors are dominated by generated boilerplate twins, not app logic.** Characterizing
+the 1.3.0→1.6.0 misses (10 FP / 28 FN): Kotlin comparator lambdas (`$$inlined$sortedBy$N` —
+structurally identical `Comparator`s), ViewBinding classes (`ItemEditGroupBinding` ↔
+`ItemEditEmailBinding`, near-identical generated code), and `R$id`/`R$string`/… resource
+classes (all-static-int, maximally ambiguous). Only ~1–2 (`VcfExporter$ExportResult`) are
+arguable real-logic classes — so **real app-logic matching stays ~99% even on a major update**;
+the F1 drop is inherently-ambiguous generated classes a change reviewer doesn't care about.
+Actionable follow-up: extend the synthetic/boilerplate filter (`eval/mapping.is_synthetic_like`
+and the matcher's skip set) to also drop `*Binding`, `R$*`, and `$$inlined$sorted*` twins.
+
+**Build note:** tags ≤ 1.2.0 (commons ≤ 3.0.0) no longer build — a dead transitive jitpack
+artifact (`com.github.duolingo:rtl-viewpager:940f12724f`, 404 everywhere); dropped in commons
+> 3.0.0. Old wrappers (Gradle 8.2.1) are bumped to 8.13 to run under JDK 21 (AGP 8.2.1 still runs).
+
+### Change-detection oracle (synthetic, DONE) vs. two-tag realism
+
+Ground-truth for the *classifier* (not just matching) is the synthetic-mutation oracle —
+`tests/fixtures/mutate.py` + `tests/integration/test_change_oracle.py` (see roadmap E-1). The
+two-tag corpus above adds *realism* for the matcher; per-touched-class change ground truth from
+the git diff between tags is still open (needs a non-shallow clone).
+
+## Noise-floor calibration (E-2 — needs same-source rebuilds)
+
+Build the *same* commit twice (and `minifyEnabled` off vs on, and two AGP versions) to
+measure how much two builds of identical source differ per feature. Feeds the per-feature
+change-detection floors. Not built yet.
 
 ## Noise-floor calibration (E-2 — needs same-source rebuilds)
 
