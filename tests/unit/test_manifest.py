@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from apkdiff.manifest import suggest_package_prefix
-from apkdiff.model import ManifestInfo
+from twinflame.manifest import suggest_package_prefix
+from twinflame.model import ManifestInfo
 
 
 def test_suggest_package_prefix_picks_common_root():

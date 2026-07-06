@@ -4,7 +4,7 @@ import json
 import sys
 from pathlib import Path
 
-from apkdiff.changes import (
+from twinflame.changes import (
     change_set,
     classify_match,
     counts,
@@ -12,7 +12,7 @@ from apkdiff.changes import (
     render_json,
     render_text,
 )
-from apkdiff.model import Match, MethodMatch
+from twinflame.model import Match, MethodMatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import synthetic as syn  # noqa: E402
@@ -208,7 +208,7 @@ def test_filter_min_confidence_drops_only_low_modified():
 
 
 def test_json_carries_schema_version():
-    from apkdiff.changes import CHANGES_SCHEMA_VERSION
+    from twinflame.changes import CHANGES_SCHEMA_VERSION
     doc = json.loads(render_json(change_set([Match(_cls(), None, 0.0)])))
     assert doc["schema_version"] == CHANGES_SCHEMA_VERSION
     assert set(doc) == {"schema_version", "summary", "changes"}

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff.accurate import compare_classes, match_methods, method_similarity
+from twinflame.accurate import compare_classes, match_methods, method_similarity
 
 
 def _m(name, bytecode, *, ret="V", args=0, instr=None, xref=0):

@@ -3,13 +3,13 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "apkdiff"
-version = "0.1.0"
+name = "twinflame"
+version = "0.1.0b1"
 description = "DEX-level Android APK class-diffing engine (SimHash + LSH + abstract-opcode comparison)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "apkdiff contributors" }]
+authors = [{ name = "twinflame contributors" }]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
@@ -30,7 +30,7 @@ test = [
 ]
 
 [project.scripts]
-apkdiff = "apkdiff.cli:main"
+twinflame = "twinflame.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/ankorio/twinflame"
@@ -42,7 +42,7 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-apkdiff = ["py.typed"]
+twinflame = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

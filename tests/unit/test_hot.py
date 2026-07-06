@@ -4,7 +4,7 @@ import random
 
 import numpy as np
 
-from apkdiff._hot import (
+from twinflame._hot import (
     hamming_pairs,
     levenshtein_bytes,
     popcount_int,

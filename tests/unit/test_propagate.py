@@ -1,11 +1,11 @@
-"""Match propagation — type-graph cascade + call-site anchor (apkdiff.propagate, M1.3/M1.4)."""
+"""Match propagation — type-graph cascade + call-site anchor (twinflame.propagate, M1.3/M1.4)."""
 
 from __future__ import annotations
 
 import synthetic
 
-from apkdiff.model import Match, MethodMatch
-from apkdiff.propagate import instantiation_pairs, propagate_matches, referenced_descriptors
+from twinflame.model import Match, MethodMatch
+from twinflame.propagate import instantiation_pairs, propagate_matches, referenced_descriptors
 
 
 def _cls(descriptor, *, superclass=None, interfaces=(), fields=(), methods=None):

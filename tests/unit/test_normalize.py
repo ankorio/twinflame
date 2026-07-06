@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from apkdiff import normalize
+from twinflame import normalize
 
 
 def test_redex_availability_is_a_bool():

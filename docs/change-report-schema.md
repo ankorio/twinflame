@@ -1,15 +1,19 @@
-# `--changes-json` schema (v1)
+# Machine-report schema (v2)
 
-The stable, machine-consumable output of `apkdiff … --changes-json OUT`. Downstream
-tooling (decompiler alignment, diff viewers) should consume **this**, not the human
-`--changes` text. The shape is versioned by the top-level `schema_version`
-(`apkdiff.changes.CHANGES_SCHEMA_VERSION`); a breaking change bumps it.
+The stable, machine-consumable output of `twinflame … -f json -o OUT` (JSON is the
+default format). Downstream tooling (decompiler alignment, diff viewers) should
+consume **this**, not the human stdout summary. The shape is versioned by the
+top-level `schema_version` (`twinflame.changes.CHANGES_SCHEMA_VERSION`); a breaking
+change bumps it. `-f csv` / `-f xml` carry the same per-class fields in a flat form.
+
+**v2** adds `lhs_super` / `rhs_super`, `lhs_interfaces` / `rhs_interfaces`, and
+`components` to every entry (type-graph context for malware triage).
 
 ## Top level
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "summary": { "modified": 384, "added": 282, "removed": 135, "cosmetic": 414, "unchanged": 10436 },
   "changes": [ /* one object per class, ranked most-review-worthy first */ ]
 }
@@ -34,6 +38,11 @@ tooling (decompiler alignment, diff viewers) should consume **this**, not the hu
   "magnitude": 95,
   "match_distance": 0.87,
   "anchored": true,
+  "lhs_super": "Landroid/app/Service;",
+  "rhs_super": "Landroid/app/Service;",
+  "lhs_interfaces": [],
+  "rhs_interfaces": [],
+  "components": ["BAS"],
   "delta": { /* only for kind=modified; see below */ },
   "methods": [ /* only for kind=modified when localizable; see below */ ]
 }
@@ -50,6 +59,9 @@ tooling (decompiler alignment, diff viewers) should consume **this**, not the hu
 | `magnitude` | int | Review-worthiness. For `modified`: feature-delta count + methods added/deleted. For `added`/`removed`: class size in instructions. Else `0`. |
 | `match_distance` | float | Structural similarity of the underlying match in `[0,1]` (`1.0` = identical). `0.0` for `added`/`removed`. |
 | `anchored` | bool | Match rests on a rename-invariant string / framework-call anchor. |
+| `lhs_super` / `rhs_super` | string \| null | Superclass descriptor per side. Framework supers (`Landroid/…;`) survive R8, so they carry across the rename. |
+| `lhs_interfaces` / `rhs_interfaces` | array | Declared interface descriptors per side. |
+| `components` | array | Sensitive-component short-codes the class implements (transitive superclass/interface resolution): `BNL` BindNotificationListener, `BAS` BindAccessibilityService, `BDA` BindDeviceAdmin, `BIM` BindInputMethod, `BAF` BindAutofill, plus generic `SVC`/`RCV`/`PRV`/`APP`. Empty for ordinary classes. |
 | `delta` | object \| absent | Present only for `modified`. |
 | `methods` | array \| absent | Per-method localization; present for `modified` when method-level changes are localizable. |
 

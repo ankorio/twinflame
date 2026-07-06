@@ -29,13 +29,13 @@ def normalize(apk_in: Path, *, out_dir: Path | None = None) -> Path:
         )
     apk_in = Path(apk_in)
     if out_dir is None:
-        out_dir = Path(tempfile.mkdtemp(prefix="apkdiff-redex-"))
+        out_dir = Path(tempfile.mkdtemp(prefix="twinflame-redex-"))
     else:
         out_dir = Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
 
     config_path = out_dir / "redex-config.json"
-    # Three safety gates have to be disabled for apkdiff's normalization use:
+    # Three safety gates have to be disabled for twinflame's normalization use:
     #
     # * `ignore_no_keep_rules: true` — Redex aborts when no ProGuard keep
     #   rules are supplied. Our two passes (LocalDcePass + RegAllocPass) are

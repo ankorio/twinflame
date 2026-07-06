@@ -1,4 +1,4 @@
-"""Score apkdiff's class matches against a real R8 mapping.txt.
+"""Score twinflame's class matches against a real R8 mapping.txt.
 
 Usage:
     python -m eval.cli donor.apk target.apk mapping.txt [--package PREFIX]
@@ -10,7 +10,7 @@ no inlining/outlining corpus yet (a difficulty-graded follow-up once this
 lands, per M3.1's gate on this harness).
 
 Two consequences of the donor being clear-named while the target is
-obfuscated (unlike the main `apkdiff` CLI's symmetric-naming assumption):
+obfuscated (unlike the main `twinflame` CLI's symmetric-naming assumption):
 - Defaults to a single global pool (`--cluster` opts back into package-based
   pooling) — package clustering only helps when both sides share (or can be
   bucketed into) a common pool key, which doesn't hold here.
@@ -26,7 +26,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from apkdiff import api, load
+from twinflame import api, load
 
 from .mapping import is_removed_target, is_synthetic_like, load_class_mapping
 from .score import score_class_matches

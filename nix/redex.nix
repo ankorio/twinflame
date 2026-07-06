@@ -12,7 +12,7 @@
 let
   # Redex's Python wrapper (redex.py) imports `packaging.version`. Bundle a
   # Python interpreter with that dep so the shebang resolves cleanly when
-  # invoked from outside a venv (e.g. via `nix run apkdiff -- --normalize`).
+  # invoked from outside a venv (e.g. via `nix run twinflame -- --normalize`).
   pythonWithDeps = python3.withPackages (ps: with ps; [ packaging ]);
 in
 stdenv.mkDerivation {
@@ -56,14 +56,14 @@ stdenv.mkDerivation {
   #      passed, even though `redex-all` sits right next to it. We expose
   #      the user-facing `redex` as a shim that injects that argument so
   #      callers like `subprocess.run(["redex", ...])` (see
-  #      src/apkdiff/normalize.py) can stay oblivious.
+  #      src/twinflame/normalize.py) can stay oblivious.
   postInstall = ''
     substituteInPlace $out/bin/redex.py \
       --replace-fail '#!/usr/bin/env python3' '#!${pythonWithDeps}/bin/python3'
     chmod +x $out/bin/redex.py
     cat > $out/bin/redex <<EOF
     #!/bin/sh
-    # --ignore-zipalign / --ignore-apksigner: apkdiff consumes the optimized
+    # --ignore-zipalign / --ignore-apksigner: twinflame consumes the optimized
     # DEX bytes for structural comparison; we don't need a runtime-loadable
     # APK, so missing Android build-tools (zipalign, apksigner) shouldn't be
     # fatal. With these flags the wrapper falls back to a plain copy of the
@@ -78,7 +78,7 @@ stdenv.mkDerivation {
   '';
 
   meta = with lib; {
-    description = "Android bytecode optimizer (LocalDcePass+RegAllocPass used by apkdiff --normalize)";
+    description = "Android bytecode optimizer (LocalDcePass+RegAllocPass used by twinflame --normalize)";
     homepage = "https://github.com/facebook/redex";
     license = licenses.mit;
     platforms = platforms.unix;

@@ -1,4 +1,4 @@
-"""apkdiff — DEX-level Android APK class-diffing engine."""
+"""twinflame — DEX-level Android APK class-diffing engine."""
 
 from .api import diff, filter, load
 from .model import (

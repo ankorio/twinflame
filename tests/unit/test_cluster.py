@@ -4,7 +4,7 @@ import math
 
 import pytest
 
-from apkdiff.cluster import (
+from twinflame.cluster import (
     GLOBAL_POOL_KEY,
     OBFUSCATED_POOL_KEY,
     ClusterOptions,
@@ -12,7 +12,7 @@ from apkdiff.cluster import (
     is_obfuscated_package,
     shannon_entropy,
 )
-from apkdiff.model import AccessFlag, Class
+from twinflame.model import AccessFlag, Class
 
 
 def _cls(pkg: str, name: str = "X") -> Class:

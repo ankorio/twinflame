@@ -1,21 +1,21 @@
-# Using apkdiff
+# Using twinflame
 
 A task-oriented guide. For *how it works internally* see [`how-it-works.md`](how-it-works.md);
 for the machine output format see [`change-report-schema.md`](change-report-schema.md).
 
-apkdiff compares two Android builds at the **DEX/class level** and tells you what changed —
+twinflame compares two Android builds at the **DEX/class level** and tells you what changed —
 even when R8/ProGuard has renamed everything. It's a CLI that emits data (matches, a change
 report, a deobfuscation map); you visualize with your own decompiler.
 
 ## Inputs
 
-Each side is an APK, a single `.dex`, a directory of `.dex` files, or an explicit
-`--dex1/--dex2` list (for dumped/extracted DEX with no APK):
+Each side is an APK, a single `.dex`, or a directory of `.dex` files (for
+dumped/extracted DEX with no APK). The input kind is detected — no flag needed:
 
 ```sh
-apkdiff old.apk new.apk                 # two APKs
-apkdiff dump_old/ dump_new/             # two directories of dumped classes*.dex
-apkdiff --dex1 a/classes.dex --dex2 b/classes.dex   # explicit lists
+twinflame old.apk new.apk                 # two APKs
+twinflame dump_old/ dump_new/             # two directories of dumped classes*.dex
+twinflame a/classes.dex b/classes.dex     # single .dex each
 ```
 
 DEX-only input has no manifest, so pass `--app-package <prefix>` (below) instead of `--auto-package`.
@@ -24,14 +24,19 @@ DEX-only input has no manifest, so pass `--app-package <prefix>` (below) instead
 
 ## UC1 — what changed between two versions of my app
 
-The main use case. Get a ranked, method-localized change report.
+The main use case. Get a ranked, method-localized change report. The semantic
+diff is the default output: a human summary prints to stdout and the machine
+report is written to a file automatically.
 
 ```sh
-apkdiff old.apk new.apk \
+twinflame old.apk new.apk \
     --app-package com.myapp \        # your app's package root(s); repeat for multi-root
-    --changes \                       # human summary to stdout
-    --changes-json changes.json       # machine-readable (the real deliverable)
+    -o changes.json                   # machine-readable (the real deliverable; JSON default)
 ```
+
+Pick the file format with `-f {json,csv,xml}`, or `--no-file` to print only the
+summary. Emit just the changed classes with `-s changed`, or narrow to one class
+with `-c <name>`.
 
 **Read the summary top-down.** The report is pre-sorted so the first things you see are the
 developer's own (`app`) changes, high-confidence first:
@@ -62,12 +67,20 @@ Two *different* apps with no shared package layout. Drop clustering so classes m
 package boundaries, and rely on rename-invariant anchors:
 
 ```sh
-apkdiff sample_a.apk sample_b.apk --no-cluster --json pairs.json
+twinflame sample_a.apk sample_b.apk --no-cluster --find-obfuscated \
+    -o pairs.json --components-file shared-components.txt
 ```
 
-`pairs.json` is the ranked list of strongly-similar class pairs (the shared-code islands). This
-mode is **experimental in v1** — matching works, but the report still assumes a version-diff
-framing; treat the high-similarity pairs as the signal.
+`pairs.json` is the ranked list of strongly-similar class pairs (the shared-code islands);
+treat the high-similarity pairs as the kinship signal.
+
+For **malware triage**, watch the `sensitive components shared by both builds` block (printed to
+stdout, and dumped to `--components-file`). twinflame resolves each class's superclass/interface
+chain — which R8 can't rename — and flags when both samples implement the same permission-gated
+component: `BNL` (NotificationListener), `BAS` (AccessibilityService), `BDA` (DeviceAdmin),
+`BIM` (InputMethod), `BAF` (Autofill). Two samples sharing an `AccessibilityService`
+implementation is a strong same-family tell. Every paired row in the JSON/CSV/XML also carries
+`lhs_super`/`rhs_super`, `interfaces`, and any `components` code.
 
 ---
 
@@ -77,7 +90,7 @@ Produce a ProGuard-style `mapping.txt` that renames the new build's obfuscated c
 names recovered from a clear-named (older/donor) build:
 
 ```sh
-apkdiff old.apk new.apk --deobfuscation-map recovered.txt
+twinflame old.apk new.apk --deobfuscation-map recovered.txt
 ```
 
 Then hand it to a decompiler / retrace:
@@ -98,15 +111,23 @@ always included).
 
 | Flag | Use |
 |---|---|
+| `-o, --output PATH` | Diff file to write (default `<apk1>__vs__<apk2>.diff.<ext>` in the cwd). |
+| `-f, --format {json,csv,xml}` | Diff file format (default `json`). |
+| `--no-file` | Print the summary only; write no file. |
+| `-s, --select {all,changed,unchanged}` | Emit only-different, only-same, or all classes (default `all`). |
+| `-c, --class NAME` | Restrict the diff to classes whose name/path/descriptor contains NAME. |
+| `-m, --matches` | Print the raw per-class match list to stdout instead of the change summary. |
+| `--components-file PATH` | Also dump the sensitive-superclass / component report to a file. |
+| `-p, --package PREFIX` | Restrict the whole diff to one package (scope filter). |
+| `-A, --auto-package` | Derive the app package from the lhs manifest and scope to it. |
 | `--app-package PREFIX` | Mark app vs library for ranking (repeatable; multi-root apps). Labeling only — does *not* filter scope. |
-| `--package PREFIX` | Restrict the whole diff to one package (scope filter). |
-| `--changes` / `--changes-json OUT` | Semantic change report (text / JSON). |
 | `--min-confidence high` | Drop low-confidence `modified` (cross-toolchain call-churn noise). |
 | `--no-cluster` | One global pool — for cross-app (UC2) or heavily repackaged builds. |
+| `--find-obfuscated` | Route obfuscated-looking packages into a single fallback pool. |
 | `--deobfuscation-map OUT` | Emit a `mapping.txt`. |
-| `--jobs N` | Parallel workers (defaults to all cores; the diff scales with it). |
+| `-j, --jobs N` | Parallel workers (defaults to all cores; the diff scales with it). |
 | `--keep-boilerplate` | Keep generated `Comparator` twins (skipped by default as review noise). |
-| `--threshold T` | Minimum similarity to report a structural match (default 0.8). |
+| `-t, --threshold T` | Minimum similarity to report a structural match (default 0.8). |
 
 ## Performance
 

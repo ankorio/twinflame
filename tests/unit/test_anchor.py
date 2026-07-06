@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff.anchor import framework_calls, seed_anchors
+from twinflame.anchor import framework_calls, seed_anchors
 
 
 def _cls(desc, *, strings=(), calls=()):

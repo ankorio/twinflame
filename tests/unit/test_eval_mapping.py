@@ -7,7 +7,7 @@ from eval.mapping import is_synthetic_like, parse_class_mapping
 
 def test_parses_class_lines_ignores_members_and_comments():
     text = """\
-# apkdiff cross-version deobfuscation map
+# twinflame cross-version deobfuscation map
 # low-confidence (0.85)
 com.acme.Login -> a.a:
     int fieldX -> a

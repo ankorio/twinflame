@@ -3,14 +3,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from apkdiff.features import (
+from twinflame.features import (
     app_type_refs,
     class_change,
     class_features,
     diff_features,
     localize_method_changes,
 )
-from apkdiff.model import MethodMatch
+from twinflame.model import MethodMatch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import synthetic as syn  # noqa: E402

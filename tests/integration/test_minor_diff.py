@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff import api
+from twinflame import api
 
 
 def test_minor_diff_identifies_mutated_class():

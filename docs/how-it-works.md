@@ -1,4 +1,4 @@
-# How apkdiff works
+# How twinflame works
 
 A plain-language walkthrough of what happens when you diff two Android apps. No prior
 knowledge of the code assumed. Diagrams are [Mermaid](https://mermaid.js.org/) — GitHub and
@@ -9,13 +9,13 @@ most Markdown viewers render them inline.
 Android release builds are run through **R8/ProGuard**, which renames every class and method
 to short meaningless names (`com.example.PaymentService` → `a.b.c`), flattens packages, and
 inlines/optimizes code. So you can't line up "the same class" across two builds by name —
-apkdiff lines them up by **what the code *is and does*** instead.
+twinflame lines them up by **what the code *is and does*** instead.
 
 ## What it produces
 
 ```mermaid
 flowchart LR
-    A["APK 1<br/>older / build A"] --> E[apkdiff]
+    A["APK 1<br/>older / build A"] --> E[twinflame]
     B["APK 2<br/>newer / build B"] --> E
     E --> M["Class and method<br/>matches"]
     E --> C["Change report<br/>added · removed · modified"]
@@ -48,7 +48,7 @@ flowchart TD
 ```
 
 The first four stages (load → cluster → anchor → SimHash/LSH → accurate) are the **Quarkslab
-four-stage architecture**; propagation and change classification are apkdiff's additions.
+four-stage architecture**; propagation and change classification are twinflame's additions.
 Each stage narrows the problem so the expensive work only runs where it's needed.
 
 ---
@@ -360,16 +360,16 @@ classDiagram
 
 ```bash
 # Class/method match report
-apkdiff old.apk new.apk
+twinflame old.apk new.apk
 
 # Two obfuscated builds (renamed packages won't align) → one global pool
-apkdiff old.apk new.apk --no-cluster
+twinflame old.apk new.apk --no-cluster
 
-# Ranked semantic change report + machine-readable JSON
-apkdiff old.apk new.apk --no-cluster --changes --changes-json changes.json
+# Ranked semantic change report (default); machine-readable JSON written to a file
+twinflame old.apk new.apk --no-cluster -o changes.json
 
 # Recover original names into a ProGuard mapping.txt (feed to jadx/retrace)
-apkdiff old.apk new.apk --deobfuscation-map recovered.txt
+twinflame old.apk new.apk --deobfuscation-map recovered.txt
 ```
 
 ## The one thing to remember

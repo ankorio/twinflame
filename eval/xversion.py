@@ -1,6 +1,6 @@
 """Cross-version (release-vs-release) matching scorer.
 
-Grades apkdiff on the *real* UC1 setup: two obfuscated release builds of the
+Grades twinflame on the *real* UC1 setup: two obfuscated release builds of the
 same app (adjacent versions, or the same version built twice). Neither side is
 clear-named, so the oracle is built by **joining the two builds' own
 `mapping.txt` files on the original class name**:
@@ -30,7 +30,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from apkdiff import api, load
+from twinflame import api, load
 
 from .mapping import is_removed_target, is_synthetic_like, parse_class_mapping
 from .score import score_class_matches

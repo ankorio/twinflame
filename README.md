@@ -1,4 +1,4 @@
-# apkdiff
+# twinflame
 
 DEX-level Android APK class-diffing engine. Given two APK versions, emits a ranked list of class matches with a normalized similarity score so you can isolate exactly which classes mutated between releases. Implements the four-stage architecture from Quarkslab's _"Android Application Diffing: Engine Overview"_ (Czayka & Thomas, 2019).
 
@@ -10,8 +10,8 @@ Use cases:
 
 ## Documentation
 
-- **[docs/using-apkdiff.md](docs/using-apkdiff.md)** — task-oriented guide: the three use cases, reading the change report, feeding the mapping to jadx/retrace.
-- **[docs/change-report-schema.md](docs/change-report-schema.md)** — the versioned `--changes-json` output format (for downstream tooling).
+- **[docs/using-twinflame.md](docs/using-twinflame.md)** — task-oriented guide: the three use cases, reading the change report, feeding the mapping to jadx/retrace.
+- **[docs/change-report-schema.md](docs/change-report-schema.md)** — the versioned JSON output format (for downstream tooling).
 - **[docs/how-it-works.md](docs/how-it-works.md)** — how the pipeline works internally, with diagrams.
 
 ## Pipeline
@@ -34,7 +34,7 @@ Requires Python ≥ 3.11. Runtime deps (androguard, numpy, rapidfuzz) install au
 git clone https://github.com/ankorio/twinflame && cd twinflame
 python -m venv .venv && . .venv/bin/activate
 pip install .            # or: pip install -e '.[test]' for a dev checkout
-apkdiff --help           # console entry point is installed
+twinflame --help           # console entry point is installed
 ```
 
 That's everything for the core tool. Two features need external programs that aren't Python
@@ -50,7 +50,7 @@ For a fully-pinned environment (Python + all deps + Redex built from source + JA
 # Install Nix with flakes (Determinate Systems installer is easiest):
 curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
 git clone https://github.com/ankorio/twinflame && cd twinflame
-nix develop            # drops you in a shell with apkdiff + Redex + JADX
+nix develop            # drops you in a shell with twinflame + Redex + JADX
 ```
 
 ## Running
@@ -64,7 +64,7 @@ nix develop            # drops you in a shell with apkdiff + Redex + JADX
 nix run . -- old.apk new.apk \
     --auto-package \
     --threshold 0.8 \
-    --json report.json
+    -o report.json
 
 # real-world example: vuln/patched pair, Redex-normalized to defeat
 # junk-instruction obfuscation, with the obfuscated-package fallback
@@ -76,17 +76,17 @@ nix run . -- vuln.apk patched.apk --normalize --find-obfuscated
 
 Each side accepts an APK, a single `.dex`, or a directory of `.dex` files — so
 you can diff **dumped/extracted DEX** (e.g. pulled from memory or an unpacked
-payload) with no surrounding APK. Explicit lists via `--dex1/--dex2` override the
-positional. A DEX-only input has no manifest, so `--auto-package` is unavailable —
-pass `--app-package <prefix>` for app-vs-library ranking instead.
+payload) with no surrounding APK, with no flag: the input kind is detected. A
+DEX-only input has no manifest, so `--auto-package` is unavailable — pass
+`--app-package <prefix>` for app-vs-library ranking instead.
 
 ```sh
 # directory of dumped classes*.dex on each side
-apkdiff dump_old/ dump_new/ --no-cluster --changes
+twinflame dump_old/ dump_new/ --no-cluster
 
-# explicit dex lists (e.g. selected dumps)
-apkdiff --dex1 a/classes.dex a/classes2.dex --dex2 b/classes.dex \
-    --no-cluster --app-package com.target.app --changes-json changes.json
+# write the machine report as CSV instead of the default JSON, only the
+# classes that actually differ
+twinflame a/ b/ --no-cluster --app-package com.target.app -s changed -f csv -o changes.csv
 ```
 
 Output format (one line per non-perfect match):
@@ -102,7 +102,9 @@ Output format (one line per non-perfect match):
 
 Each `[+]` paired line is followed by the methods that actually changed, so you
 see *which* method moved the class score, not just that the class changed. The
-JSON report (`--json`) carries the full per-method verdict list for every match.
+machine report (written by default; `-f json`) carries the full per-method
+verdict list, plus each paired class's superclass/interfaces and any sensitive
+component it implements (see below).
 
 Timings go to stderr; the diff itself to stdout (so you can `| less` or redirect freely).
 
@@ -125,8 +127,8 @@ Reading the output:
 ### Build a standalone binary
 
 ```sh
-nix build              # produces ./result/bin/apkdiff
-./result/bin/apkdiff --help
+nix build              # produces ./result/bin/twinflame
+./result/bin/twinflame --help
 ```
 
 ### Dev shell
@@ -136,13 +138,13 @@ For interactive use (REPL, hacking on the code, running tests):
 ```sh
 nix develop            # enter shell with python + redex + jadx on PATH
 pytest tests/          # 86 tests, ~8s
-python -m apkdiff.cli --help
+python -m twinflame.cli --help
 ```
 
 ### Python API
 
 ```python
-from apkdiff import load, filter, diff
+from twinflame import load, filter, diff
 
 lhs_app = load("app-1.6.1.apk")
 rhs_app = load("app-1.6.3.apk")
@@ -162,11 +164,11 @@ for m in matches:
 
 ### Cross-version deobfuscation map
 
-`--deobfuscation-map OUT` writes a ProGuard-format `mapping.txt` for **apk2** (the obfuscated/stripped build) by propagating class names recovered from the matched classes in **apk1** (the donor build that still carries the DEX `SourceFile` attribute). Load it into JADX/Ghidra and the rename propagates to every reference automatically — apkdiff never rewrites the DEX.
+`--deobfuscation-map OUT` writes a ProGuard-format `mapping.txt` for **apk2** (the obfuscated/stripped build) by propagating class names recovered from the matched classes in **apk1** (the donor build that still carries the DEX `SourceFile` attribute). Load it into JADX/Ghidra and the rename propagates to every reference automatically — twinflame never rewrites the DEX.
 
 ```sh
 # apk1 = older build that kept SourceFile; apk2 = the one you want to read
-apkdiff app-old.apk app-new.apk \
+twinflame app-old.apk app-new.apk \
     --find-obfuscated --deobfuscation-map app-new.map --map-min-confidence 0.8
 ```
 
@@ -192,31 +194,31 @@ jadx --mappings-path app-new.map -Prename-mappings.format=PROGUARD_FILE -Prename
 
 ### Evaluation harness (`eval/`, plan M3.2)
 
-Grades apkdiff's own class matches against real ground truth instead of eyeballing them. Build an OSS Android app **twice** — R8 off, then R8 on at full optimization — the `mapping.txt` R8 writes for the R8-on build is a free, perfect oracle for the renaming-only case (directly grades M1.1 + M1.2; inlining/outlining is a future difficulty-graded slice per M3.1).
+Grades twinflame's own class matches against real ground truth instead of eyeballing them. Build an OSS Android app **twice** — R8 off, then R8 on at full optimization — the `mapping.txt` R8 writes for the R8-on build is a free, perfect oracle for the renaming-only case (directly grades M1.1 + M1.2; inlining/outlining is a future difficulty-graded slice per M3.1).
 
 ```sh
 python -m eval.cli app-r8-off.apk app-r8-on.apk app-r8-on/mapping.txt --package com.vendor.app
 ```
 
-Prints true/false positive & negative class-match counts plus precision/recall/F1. `eval/mapping.py` parses the ProGuard-format oracle (same format `deobf.py` emits); `eval/score.py` exposes `score_class_matches(matches, ground_truth) -> ScoreResult` for use as a library, independent of the CLI. Kept out of the `src/apkdiff` package on purpose — it's tooling to grade the engine, not part of it.
+Prints true/false positive & negative class-match counts plus precision/recall/F1. `eval/mapping.py` parses the ProGuard-format oracle (same format `deobf.py` emits); `eval/score.py` exposes `score_class_matches(matches, ground_truth) -> ScoreResult` for use as a library, independent of the CLI. Kept out of the `src/twinflame` package on purpose — it's tooling to grade the engine, not part of it.
 
 ## Layout
 
 | Module                                               | Role                                                                 |
 | ---------------------------------------------------- | -------------------------------------------------------------------- |
-| [src/apkdiff/model.py](src/apkdiff/model.py)         | Dataclasses: `App`, `Class`, `Method`, `Field`, `Signature`, `Match`, `MethodMatch` |
-| [src/apkdiff/loader.py](src/apkdiff/loader.py)       | androguard wrapping + multi-DEX merge; captures calls/strings/xrefs  |
-| [src/apkdiff/manifest.py](src/apkdiff/manifest.py)   | `AndroidManifest.xml` → `ManifestInfo`; dev-package suggestion       |
-| [src/apkdiff/normalize.py](src/apkdiff/normalize.py) | Redex subprocess wrapper                                             |
-| [src/apkdiff/cluster.py](src/apkdiff/cluster.py)     | Package-based pools + entropy/length obfuscation fallback            |
-| [src/apkdiff/anchor.py](src/apkdiff/anchor.py)       | Stage B: string-IDF + framework-call seed matches                    |
-| [src/apkdiff/signature.py](src/apkdiff/signature.py) | 128-bit SimHash + LSH bucket index                                   |
-| [src/apkdiff/accurate.py](src/apkdiff/accurate.py)   | Abstract opcodes, method-level + class scoring, greedy 1-to-1 assignment |
-| [src/apkdiff/opcodes.py](src/apkdiff/opcodes.py)     | Dalvik opcode → 13-category lookup table                             |
-| [src/apkdiff/\_hot.py](src/apkdiff/_hot.py)          | Hot loops (popcount, Hamming, rapidfuzz-backed Levenshtein)          |
-| [src/apkdiff/deobf.py](src/apkdiff/deobf.py)         | Cross-version deobfuscation: recovered names → ProGuard mapping.txt   |
-| [src/apkdiff/api.py](src/apkdiff/api.py)             | Public `load / filter / diff` entry points                           |
-| [src/apkdiff/cli.py](src/apkdiff/cli.py)             | `apkdiff` console script                                             |
+| [src/twinflame/model.py](src/twinflame/model.py)         | Dataclasses: `App`, `Class`, `Method`, `Field`, `Signature`, `Match`, `MethodMatch` |
+| [src/twinflame/loader.py](src/twinflame/loader.py)       | androguard wrapping + multi-DEX merge; captures calls/strings/xrefs  |
+| [src/twinflame/manifest.py](src/twinflame/manifest.py)   | `AndroidManifest.xml` → `ManifestInfo`; dev-package suggestion       |
+| [src/twinflame/normalize.py](src/twinflame/normalize.py) | Redex subprocess wrapper                                             |
+| [src/twinflame/cluster.py](src/twinflame/cluster.py)     | Package-based pools + entropy/length obfuscation fallback            |
+| [src/twinflame/anchor.py](src/twinflame/anchor.py)       | Stage B: string-IDF + framework-call seed matches                    |
+| [src/twinflame/signature.py](src/twinflame/signature.py) | 128-bit SimHash + LSH bucket index                                   |
+| [src/twinflame/accurate.py](src/twinflame/accurate.py)   | Abstract opcodes, method-level + class scoring, greedy 1-to-1 assignment |
+| [src/twinflame/opcodes.py](src/twinflame/opcodes.py)     | Dalvik opcode → 13-category lookup table                             |
+| [src/twinflame/\_hot.py](src/twinflame/_hot.py)          | Hot loops (popcount, Hamming, rapidfuzz-backed Levenshtein)          |
+| [src/twinflame/deobf.py](src/twinflame/deobf.py)         | Cross-version deobfuscation: recovered names → ProGuard mapping.txt   |
+| [src/twinflame/api.py](src/twinflame/api.py)             | Public `load / filter / diff` entry points                           |
+| [src/twinflame/cli.py](src/twinflame/cli.py)             | `twinflame` console script                                             |
 
 ## Tests
 
@@ -234,7 +236,7 @@ The on-disk DEX/APK round-trip (loader.py end-to-end) currently has a smoke-only
 
 - **Identical-structure classes collide.** Pools where many classes share signatures (trivial getter/setter classes, generated stubs) may produce false pairings via greedy assignment. `--min-instr 5` filters trivial classes; raising `--neighbors` widens the candidate pool.
 - **No inheritance context.** Matching is per-class (now with method-level detail *inside* a paired class), but ignores first-level parent/child signals (cf. LibPecker); these can be added later without disturbing the core.
-- **No cross-boundary / optimization resilience yet.** Matching assumes a 1:1 class and method correspondence. R8 *optimizations* that break that assumption — inlining, outlining, class merging — are a planned future track (see `apkdiff-next-dev-plan.md`, M3.1), not yet implemented.
+- **No cross-boundary / optimization resilience yet.** Matching assumes a 1:1 class and method correspondence. R8 *optimizations* that break that assumption — inlining, outlining, class merging — are a planned future track (see `twinflame-next-dev-plan.md`, M3.1), not yet implemented.
 - **JNI / native-code changes are invisible.** The diff is purely Dalvik-level — native library mutations require a complementary native-code diff.
 - **LSH is approximate by design.** `--buckets N` tunes the accuracy/speed knob.
 

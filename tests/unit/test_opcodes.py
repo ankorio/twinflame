@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from apkdiff.opcodes import CATEGORY, Category, categorize
+from twinflame.opcodes import CATEGORY, Category, categorize
 
 
 def test_table_is_exactly_256_bytes():

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff import api
+from twinflame import api
 
 
 def _child(descriptor, superclass):

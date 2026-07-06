@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 
-from apkdiff.model import AccessFlag, Class, Method
+from twinflame.model import AccessFlag, Class, Method
 
 import synthetic as syn  # fixtures dir is on sys.path when tests import this
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff import api
+from twinflame import api
 
 
 def _twin_classes(n: int):

@@ -24,7 +24,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from apkdiff import api, load
+from twinflame import api, load
 
 from .mapping import parse_class_mapping
 from .score import ScoreResult, score_class_matches

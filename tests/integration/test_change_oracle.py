@@ -12,8 +12,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from apkdiff import api
-from apkdiff.changes import change_set
+from twinflame import api
+from twinflame.changes import change_set
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import mutate as mut  # noqa: E402

@@ -7,7 +7,7 @@ androguard at all.
 
 from __future__ import annotations
 
-from apkdiff.loader import _count_params, _parse_proto
+from twinflame.loader import _count_params, _parse_proto
 
 
 def test_count_params_compact_descriptor_no_spaces():

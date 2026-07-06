@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from apkdiff.loader import _collect_dex_files
+from twinflame.loader import _collect_dex_files
 
 
 def test_collect_expands_directory_recursively(tmp_path: Path):
@@ -50,13 +50,13 @@ def test_collect_empty_when_nothing_matches(tmp_path: Path):
 # --- clean failures on bad input (no traceback leaks) ------------------------
 
 def test_load_raises_loaderror_on_missing_file(tmp_path: Path):
-    from apkdiff.loader import LoadError, load
+    from twinflame.loader import LoadError, load
     with pytest.raises(LoadError, match="file not found"):
         load(tmp_path / "nope.apk")
 
 
 def test_load_raises_loaderror_on_non_apk(tmp_path: Path):
-    from apkdiff.loader import LoadError, load
+    from twinflame.loader import LoadError, load
     f = tmp_path / "text.apk"
     f.write_text("not an apk")
     with pytest.raises(LoadError):
@@ -64,19 +64,19 @@ def test_load_raises_loaderror_on_non_apk(tmp_path: Path):
 
 
 def test_load_dex_raises_loaderror_on_empty_dir(tmp_path: Path):
-    from apkdiff.loader import LoadError, load_dex
+    from twinflame.loader import LoadError, load_dex
     with pytest.raises(LoadError, match="no .dex files"):
         load_dex(tmp_path)
 
 
 def test_load_dex_raises_loaderror_on_missing_file(tmp_path: Path):
-    from apkdiff.loader import LoadError, load_dex
+    from twinflame.loader import LoadError, load_dex
     with pytest.raises(LoadError, match="file not found"):
         load_dex([tmp_path / "gone.dex"])
 
 
 def test_load_dex_raises_loaderror_on_corrupt_dex(tmp_path: Path):
-    from apkdiff.loader import LoadError, load_dex
+    from twinflame.loader import LoadError, load_dex
     bad = tmp_path / "junk.dex"
     bad.write_bytes(b"dex\n035\x00garbage")
     with pytest.raises(LoadError, match="could not parse DEX"):
@@ -84,17 +84,17 @@ def test_load_dex_raises_loaderror_on_corrupt_dex(tmp_path: Path):
 
 
 # --- round-trip: raw DEX loads to the same classes as its APK ----------------
-# Needs a real APK; point APKDIFF_TEST_APK at one to enable (kept binary-free in CI).
+# Needs a real APK; point TWINFLAME_TEST_APK at one to enable (kept binary-free in CI).
 
-_APK = os.environ.get("APKDIFF_TEST_APK")
+_APK = os.environ.get("TWINFLAME_TEST_APK")
 
 
 @pytest.mark.skipif(not _APK or not Path(_APK).exists(),
-                    reason="set APKDIFF_TEST_APK to a real .apk to run the DEX round-trip")
+                    reason="set TWINFLAME_TEST_APK to a real .apk to run the DEX round-trip")
 def test_load_dex_matches_apk_class_set(tmp_path: Path):
     import zipfile
 
-    from apkdiff import api
+    from twinflame import api
 
     apk_app = api.load(_APK)
     dump = tmp_path / "dump"

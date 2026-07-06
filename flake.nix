@@ -1,5 +1,5 @@
 {
-  description = "apkdiff — DEX-level Android APK class-diffing engine";
+  description = "twinflame — DEX-level Android APK class-diffing engine";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -69,7 +69,7 @@
 
         # Redex is vendored from ./nix/redex.nix using the pinned
         # `redex-src` flake input — nixpkgs does not package it. Defined
-        # before `apkdiff` because `apkdiff`'s wrapper bakes it into PATH.
+        # before `twinflame` because `twinflame`'s wrapper bakes it into PATH.
         # Pin Python explicitly: redex.py uses the `pipes` stdlib module
         # which was removed in Python 3.13, so we must stay on 3.12.
         redex = pkgs.callPackage ./nix/redex.nix {
@@ -77,15 +77,15 @@
           python3 = python;
         };
 
-        apkdiff = python.pkgs.buildPythonApplication {
-          pname = "apkdiff";
-          version = "0.1.0";
+        twinflame = python.pkgs.buildPythonApplication {
+          pname = "twinflame";
+          version = "0.1.0b1";
           src = ./.;
           format = "pyproject";
           nativeBuildInputs = with python.pkgs; [ setuptools wheel ];
           propagatedBuildInputs = pyDeps python.pkgs;
           nativeCheckInputs = pyTestDeps python.pkgs;
-          pythonImportsCheck = [ "apkdiff" ];
+          pythonImportsCheck = [ "twinflame" ];
 
           # `--normalize` shells out to `redex`. The dev shell has it on PATH
           # already; for `nix run` / `nix build` the resulting binary needs
@@ -100,12 +100,12 @@
         ];
 
       in {
-        packages.default = apkdiff;
-        packages.apkdiff = apkdiff;
+        packages.default = twinflame;
+        packages.twinflame = twinflame;
 
         apps.default = {
           type = "app";
-          program = "${apkdiff}/bin/apkdiff";
+          program = "${twinflame}/bin/twinflame";
         };
 
         devShells.default = pkgs.mkShell {
@@ -116,7 +116,7 @@
           ] ++ analystTools;
 
           shellHook = ''
-            echo "apkdiff dev shell — python $(python --version | cut -d' ' -f2), redex on PATH"
+            echo "twinflame dev shell — python $(python --version | cut -d' ' -f2), redex on PATH"
           '';
         };
       });

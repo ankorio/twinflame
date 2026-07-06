@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff.model import Match
+from twinflame.model import Match
 from eval.score import score_class_matches
 
 

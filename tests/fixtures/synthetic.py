@@ -1,6 +1,6 @@
 """Synthetic Class/Method/Field factories for tests.
 
-We build `apkdiff.model.Class` instances directly from high-level Python
+We build `twinflame.model.Class` instances directly from high-level Python
 specs and feed them through cluster -> signature -> accurate -> api. This
 bypasses the on-disk DEX/APK format (see build_dex.py) but exercises every
 algorithm the engine implements. No binary fixtures are committed.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dc_field
 
-from apkdiff.model import AccessFlag, Class, Field, Method
+from twinflame.model import AccessFlag, Class, Field, Method
 
 
 @dataclass(frozen=True)

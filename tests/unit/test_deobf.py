@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff.deobf import build_mapping, recovered_head, render_mapping
-from apkdiff.model import Match, MethodMatch
+from twinflame.deobf import build_mapping, recovered_head, render_mapping
+from twinflame.model import Match, MethodMatch
 
 
 def _cls(descriptor, *, source_file=None, fields=()):

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from apkdiff.accurate import (
+from twinflame.accurate import (
     BYTECODE_WEIGHT,
     FEATURE_WEIGHT,
     HUNGARIAN_MAX_POOL_SIZE,
@@ -16,7 +16,7 @@ from apkdiff.accurate import (
     hungarian_assign,
     select_assignment,
 )
-from apkdiff.model import AccessFlag
+from twinflame.model import AccessFlag
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fixtures"))
 import synthetic  # noqa: E402

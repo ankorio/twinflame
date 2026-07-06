@@ -305,7 +305,7 @@ def render_mapping(entries: list[MappingEntry]) -> str:
     `# low-confidence` convention as class lines, applied per member.
     """
     out: list[str] = [
-        "# apkdiff cross-version deobfuscation map",
+        "# twinflame cross-version deobfuscation map",
         "# format: <recovered name> -> <obfuscated name in target APK>:",
         "#         indented member lines rename methods/fields within a class",
         "# package stays obfuscated (source files carry no package); only the",

@@ -3,8 +3,8 @@ from __future__ import annotations
 import random
 import time
 
-from apkdiff.model import Signature
-from apkdiff.signature import (
+from twinflame.model import Signature
+from twinflame.signature import (
     BUCKET_PREFIX_BITS_DEFAULT,
     LSHIndex,
     N_PERMUTATIONS_DEFAULT,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from apkdiff.provenance import (
+from twinflame.provenance import (
     classify_origin,
     dev_descriptor_prefix,
     dev_descriptor_prefixes,

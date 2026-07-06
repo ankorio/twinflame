@@ -1,10 +1,10 @@
 # Evaluation corpora
 
-apkdiff's accuracy work is graded against real corpora, never eyeballed. This directory
+twinflame's accuracy work is graded against real corpora, never eyeballed. This directory
 documents how each corpus is produced. **No APKs or DEX are committed** (binaries stay
 out of git); only the reproducible recipe lives here. Build outputs go to a working area
-**outside** the git repo — the convention is `<repo-parent>/corpus/` (e.g.
-`/mnt/vault/Reversing/apkdiff/corpus/`), which is not itself a git repo.
+**outside** the git repo — the convention is a `corpus/` directory alongside the
+repo checkout (`../corpus/` relative to this repo root), which is not itself a git repo.
 
 ## What each corpus grades
 
@@ -385,7 +385,7 @@ lambdas (`$$inlined$sortedBy$N` — structurally identical `Comparator`s), ViewB
 **After the filter (V1-A landed 2026-07-05):** the curve is **nearly flat** — F1 stays ≥0.96
 even across the major span, and precision is ≥0.99 everywhere. The residual 1 FP / 4–5 FN are
 genuine cross-version refactors of real classes (irreducible version-change signal), not tool
-error. Filter is two-sided: `apkdiff/boilerplate.py` skips tiny `java/util/Comparator`
+error. Filter is two-sided: `twinflame/boilerplate.py` skips tiny `java/util/Comparator`
 implementers in the matcher (obfuscation-robust; R8 keeps the framework interface), and
 `eval/mapping.is_generated_boilerplate` excludes `R`/`R$*`, `*Binding`, and `$$inlined$sort*`
 by original name from the oracle. Disable the matcher side with `--keep-boilerplate`.

@@ -5,7 +5,7 @@ obfuscated name; one class per top-level line, member lines indented and
 ignored here) into a `{original_fqcn: obfuscated_fqcn}` dict — the class-level
 ground truth a real double build (R8 off vs R8 on) produces for free.
 
-This is the same file format `apkdiff.deobf.render_mapping` emits, so the
+This is the same file format `twinflame.deobf.render_mapping` emits, so the
 parser and the writer are format-compatible by construction.
 """
 

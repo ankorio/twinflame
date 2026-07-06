@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import synthetic
 
-from apkdiff import api
+from twinflame import api
 
 
 def test_self_diff_yields_only_perfect_matches():

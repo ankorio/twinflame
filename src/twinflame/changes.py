@@ -41,8 +41,9 @@ from .features import (
 from .model import Class, Match
 from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
-# Bump on any breaking change to the --changes-json shape (see docs/change-report-schema.md).
-CHANGES_SCHEMA_VERSION = 1
+# Bump on any breaking change to the JSON shape (see docs/change-report-schema.md).
+# v2: added superclass / interfaces / components on paired rows (feedback #4).
+CHANGES_SCHEMA_VERSION = 2
 
 # Review-worthiness ordering: real edits first, cosmetic/unchanged last.
 _KIND_RANK = {"modified": 0, "added": 1, "removed": 2, "cosmetic": 3, "unchanged": 4}
@@ -68,6 +69,15 @@ class ClassChange:
     # (different R8 versions relocate calls between classes; measured 95% of the
     # false-modified on a same-source cross-R8 rebuild). Everything else is "high".
     confidence: str = "high"
+    # Type-graph context for the reviewer (feedback #4). Framework superclass /
+    # interface descriptors survive R8, so they carry across the rename boundary.
+    lhs_super: Optional[str] = None
+    rhs_super: Optional[str] = None
+    lhs_interfaces: tuple[str, ...] = ()
+    rhs_interfaces: tuple[str, ...] = ()
+    # Sensitive-component short-codes implemented by this class on either side
+    # (e.g. ("BAS",) for an AccessibilityService). See components.py.
+    components: tuple[str, ...] = ()
 
     @property
     def summary(self) -> str:
@@ -103,22 +113,43 @@ def build_class_map(matches: Iterable[Match]) -> dict[str, str]:
     }
 
 
+def _components(*descriptors: Optional[str], component_map: Optional[dict[str, set[str]]]) -> tuple[str, ...]:
+    if not component_map:
+        return ()
+    codes: set[str] = set()
+    for d in descriptors:
+        if d:
+            codes |= component_map.get(d, set())
+    return tuple(sorted(codes))
+
+
 def classify_match(
     m: Match,
     class_map: Optional[ClassMap] = None,
     dev_prefix: Union[str, tuple[str, ...], None] = None,
+    component_map: Optional[dict[str, set[str]]] = None,
 ) -> ClassChange:
     """One `Match` -> one typed change verdict. `dev_prefix` (a descriptor prefix
     or tuple of them, from `provenance.dev_descriptor_prefixes`) enables
-    app/library origin tagging."""
+    app/library origin tagging. `component_map` (descriptor -> sensitive-component
+    codes, from `components.component_labels`) tags dangerous base classes."""
     if m.is_added:
         return ClassChange("added", None, m.rhs.descriptor, m.rhs.source_file,
-                           _size(m.rhs), 0.0, False, origin_of(m.rhs, dev_prefix), None)
+                           _size(m.rhs), 0.0, False, origin_of(m.rhs, dev_prefix), None,
+                           rhs_super=m.rhs.superclass, rhs_interfaces=m.rhs.interfaces,
+                           components=_components(m.rhs.descriptor, component_map=component_map))
     if m.is_deleted:
         return ClassChange("removed", m.lhs.descriptor, None, m.lhs.source_file,
-                           _size(m.lhs), 0.0, False, origin_of(m.lhs, dev_prefix), None)
+                           _size(m.lhs), 0.0, False, origin_of(m.lhs, dev_prefix), None,
+                           lhs_super=m.lhs.superclass, lhs_interfaces=m.lhs.interfaces,
+                           components=_components(m.lhs.descriptor, component_map=component_map))
 
     delta = class_change(m.lhs, m.rhs, class_map)
+    type_ctx = dict(
+        lhs_super=m.lhs.superclass, rhs_super=m.rhs.superclass,
+        lhs_interfaces=m.lhs.interfaces, rhs_interfaces=m.rhs.interfaces,
+        components=_components(m.lhs.descriptor, m.rhs.descriptor, component_map=component_map),
+    )
     anchored = m.breakdown.get("anchored") == 1.0
     src = m.lhs.source_file or m.rhs.source_file
     origin = origin_of(m.lhs, dev_prefix)  # older side names the class we review
@@ -142,26 +173,27 @@ def classify_match(
         confidence = "low" if (call_only and origin != "app") else "high"
         return ClassChange("modified", m.lhs.descriptor, m.rhs.descriptor, src,
                            delta.magnitude + n_structural, m.distance, anchored,
-                           origin, delta, method_deltas, confidence)
+                           origin, delta, method_deltas, confidence, **type_ctx)
     kind = "unchanged" if m.distance >= _IDENTICAL else "cosmetic"
     return ClassChange(kind, m.lhs.descriptor, m.rhs.descriptor, src,
-                       0, m.distance, anchored, origin, None)
+                       0, m.distance, anchored, origin, None, **type_ctx)
 
 
 def change_set(
     matches: Iterable[Match],
     dev_package: Union[str, _Iterable[str], None] = None,
+    component_map: Optional[dict[str, set[str]]] = None,
 ) -> list[ClassChange]:
     """All verdicts, ranked most-review-worthy first: by kind (real edits first),
     then **origin** (the developer's own `app` code above `library` churn), then
     descending magnitude, then source file for determinism. `dev_package` — one
     prefix or several (multi-root apps), e.g. from `--app-package`/`--package` or
     the manifest — drives the app/library split; without it only known libraries
-    are demoted."""
+    are demoted. `component_map` tags sensitive base classes (see components.py)."""
     matches = list(matches)
     class_map = build_class_map(matches)
     dev_prefix = dev_descriptor_prefixes(dev_package)
-    changes = [classify_match(m, class_map, dev_prefix) for m in matches]
+    changes = [classify_match(m, class_map, dev_prefix, component_map) for m in matches]
     changes.sort(key=lambda c: (_KIND_RANK.get(c.kind, 9),
                                 ORIGIN_RANK.get(c.origin, 1),
                                 0 if c.confidence == "high" else 1, -c.magnitude,
@@ -189,6 +221,11 @@ def render_json(changes: Iterable[ClassChange]) -> str:
             "anchored": c.anchored,
             "origin": c.origin,
             "confidence": c.confidence,
+            "lhs_super": c.lhs_super,
+            "rhs_super": c.rhs_super,
+            "lhs_interfaces": list(c.lhs_interfaces),
+            "rhs_interfaces": list(c.rhs_interfaces),
+            "components": list(c.components),
         }
         if c.delta is not None:
             row["delta"] = {
@@ -222,6 +259,118 @@ def render_json(changes: Iterable[ClassChange]) -> str:
     return json.dumps(doc, indent=2, sort_keys=True)
 
 
+_CSV_COLUMNS = (
+    "kind", "origin", "confidence", "lhs", "rhs", "magnitude",
+    "match_distance", "anchored", "lhs_super", "rhs_super",
+    "interfaces", "components", "summary",
+)
+
+
+def _row_values(c: ClassChange) -> dict[str, str]:
+    ifaces = sorted(set(c.lhs_interfaces) | set(c.rhs_interfaces))
+    return {
+        "kind": c.kind,
+        "origin": c.origin,
+        "confidence": c.confidence,
+        "lhs": c.lhs or "",
+        "rhs": c.rhs or "",
+        "magnitude": str(c.magnitude),
+        "match_distance": f"{c.match_distance:.4f}",
+        "anchored": "true" if c.anchored else "false",
+        "lhs_super": c.lhs_super or "",
+        "rhs_super": c.rhs_super or "",
+        "interfaces": " ".join(ifaces),
+        "components": ";".join(c.components),
+        "summary": c.summary,
+    }
+
+
+def render_csv(changes: Iterable[ClassChange]) -> str:
+    """Flat, spreadsheet/grep-friendly view: one row per class change."""
+    import csv
+    import io
+
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=_CSV_COLUMNS, extrasaction="ignore")
+    w.writeheader()
+    for c in changes:
+        w.writerow(_row_values(c))
+    return buf.getvalue()
+
+
+def render_xml(changes: Iterable[ClassChange]) -> str:
+    """Same per-class data as XML for pipelines that consume it."""
+    import xml.etree.ElementTree as ET
+
+    changes = list(changes)
+    root = ET.Element("twinflame", attrib={"schema_version": str(CHANGES_SCHEMA_VERSION)})
+    summ = ET.SubElement(root, "summary")
+    for k, v in counts(changes).items():
+        ET.SubElement(summ, "count", attrib={"kind": k}).text = str(v)
+    body = ET.SubElement(root, "changes")
+    for c in changes:
+        row = _row_values(c)
+        el = ET.SubElement(body, "change")
+        for key, val in row.items():
+            if val:
+                ET.SubElement(el, key).text = val
+    ET.indent(root)
+    return ET.tostring(root, encoding="unicode") + "\n"
+
+
+_SELECT_KINDS = {
+    "all": None,
+    "changed": {"modified", "added", "removed"},
+    "unchanged": {"unchanged", "cosmetic"},
+}
+
+
+def select_changes(changes: Iterable[ClassChange], mode: str) -> list[ClassChange]:
+    """Filter to only-changed ("changed"), only-same ("unchanged"), or "all"."""
+    keep = _SELECT_KINDS.get(mode)
+    changes = list(changes)
+    return changes if keep is None else [c for c in changes if c.kind in keep]
+
+
+def filter_class(changes: Iterable[ClassChange], needle: str) -> list[ClassChange]:
+    """Keep changes whose lhs/rhs descriptor or source file contains `needle`
+    (case-insensitive). Accepts a class name, package path, or descriptor."""
+    n = needle.lower()
+    out = []
+    for c in changes:
+        hay = " ".join(x for x in (c.lhs, c.rhs, c.source_file) if x).lower()
+        if n in hay:
+            out.append(c)
+    return out
+
+
+def sensitive_summary(changes: Iterable[ClassChange]) -> list[ClassChange]:
+    """Paired classes that implement a sensitive component on both sides — the
+    'both builds share a possibly-malicious implementation' signal."""
+    from .components import SENSITIVE_CODES
+
+    return [
+        c for c in changes
+        if c.lhs and c.rhs and (set(c.components) & SENSITIVE_CODES)
+    ]
+
+
+def render_components_text(changes: Iterable[ClassChange]) -> str:
+    """Human headline block for the sensitive-component overlap (feedback #4)."""
+    from .components import SENSITIVE_CODES, code_name
+
+    changes = list(changes)
+    shared = sensitive_summary(changes)
+    if not shared:
+        return "sensitive components: none shared across both builds"
+    lines = [f"sensitive components shared by both builds ({len(shared)} classes):"]
+    for c in sorted(shared, key=lambda x: (x.components, x.lhs or "")):
+        codes = [f"{code}={code_name(code)}" for code in c.components if code in SENSITIVE_CODES]
+        base = c.lhs_super or c.rhs_super or "?"
+        lines.append(f"  [{','.join(codes)}] {c.lhs}  <->  {c.rhs}   (extends {base})")
+    return "\n".join(lines)
+
+
 _ORIGIN_TAG = {"app": "app", "library": "lib", "unknown": "?"}
 _CONFIDENCE_RANK = {"high": 0, "low": 1}
 
@@ -248,6 +397,14 @@ def render_text(changes: Iterable[ClassChange], *, top: int = 30) -> str:
         + "  ".join(f"{k}={c.get(k, 0)}" for k in
                     ("modified", "added", "removed", "cosmetic", "unchanged")),
     ]
+    shared_sensitive = sensitive_summary(changes)
+    if shared_sensitive:
+        codes = sorted({code for x in shared_sensitive for code in x.components})
+        lines.append(
+            f"  ⚠ sensitive components shared by both builds: "
+            f"{len(shared_sensitive)} classes [{', '.join(codes)}] "
+            f"(see the components section)"
+        )
     if lo_mod:
         lines.append(
             f"  modified confidence: high={hi_mod}  low={lo_mod} "

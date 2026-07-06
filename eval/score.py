@@ -1,6 +1,6 @@
 """Class-level precision/recall/F1 scorer for the M3.2 evaluation harness.
 
-Grades apkdiff's own class matches against real ground truth from a double
+Grades twinflame's own class matches against real ground truth from a double
 build (R8 off -> the `lhs`/donor input; R8 on -> the `rhs`/target input, with
 its real `mapping.txt` as the oracle). This is the "renaming-only" slice: it
 grades M1.1 (method-level matching feeds class scoring) + M1.2 (anchoring)
@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from apkdiff.model import Class, Match
+from twinflame.model import Class, Match
 
 
 def _fqcn(cls: Class) -> str:
@@ -43,7 +43,7 @@ class ScoreResult:
 
 
 def score_class_matches(matches: Iterable[Match], ground_truth: dict[str, str]) -> ScoreResult:
-    """Score apkdiff's paired class matches against a real mapping.txt oracle.
+    """Score twinflame's paired class matches against a real mapping.txt oracle.
 
     `ground_truth` is `{original_fqcn (lhs/donor side): obfuscated_fqcn (rhs/
     target side)}`, as parsed by `eval.mapping.load_class_mapping`. Only
