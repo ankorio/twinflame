@@ -49,7 +49,7 @@ sections below; this is the at-a-glance scoreboard.
   regime aggressively-optimized apps (e.g. Telegram) fall into.
 
 Two runs have no P/R oracle (org-released binaries ship no `mapping.txt`) and are assessed by
-running the `--changes` report + spot-check:
+running the change report (the default output) + spot-check:
 - **Private benchmark app** (cartera 1.8.2→1.9.1, ~2.5-mo cross-toolchain gap): runs; report =
   `modified 1276 / added 5012 / removed 5008 / cosmetic 286 / unchanged 277`. The large symmetric
   add/remove is library churn + toolchain drift — what `--app-package` + the V1-B noise floor tame.
@@ -62,7 +62,7 @@ pipeline scales and that the change report stays reviewable on a real, adjacent-
 
 - **Scale/perf:** 39,108 → 40,090 classes/side, 145 MB APKs. **Load 123 s + diff 94 s ≈ 3.5 min**
   total (`--jobs` = all cores; 517 pools compared, largest 2457×2467). 21,723 matches.
-- **Change report (`--changes --app-package org.telegram`):**
+- **Change report (`--app-package org.telegram`, the default output):**
   `modified 394 / added 888 / removed 295 / cosmetic 497 / unchanged 19,649`; **app-only**
   `modified 384 / added 282 / removed 135 / cosmetic 414 / unchanged 10,436`. i.e. of ~40 k
   classes the reviewer is handed **~384 app classes to look at** — the rest are unchanged/
@@ -407,7 +407,7 @@ the git diff between tags is still open (needs a non-shallow clone).
 ## Noise-floor calibration (E-2, V1-B) — DONE 2026-07-05
 
 The change classifier's `modified` verdict must not fire on *build* differences. Measured the
-noise floor by running `--changes` on **same-source** pairs (any `modified` = pure noise):
+noise floor by running the change report on **same-source** pairs (any `modified` = pure noise):
 
 | Same-source pair | What differs | modified (all noise) |
 |---|---|---|

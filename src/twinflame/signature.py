@@ -7,7 +7,7 @@ from typing import Iterable
 
 from .anchor import FRAMEWORK_PREFIXES
 from .model import AccessFlag, Class, Signature
-from .opcodes import categorize
+from .opcodes import method_categories
 
 PARTIAL_BITS = 32
 SIGNATURE_BITS = 128
@@ -108,7 +108,7 @@ def _code_features(c: Class) -> list[tuple[str, float]]:
     feats: list[tuple[str, float]] = []
     for m in c.methods:
         w = math.log2(2 + m.instr_count)
-        for cat in categorize(m.bytecode):
+        for cat in method_categories(m):
             feats.append((f"op={cat}", w))
         # Framework/library call targets are the strongest optimization- and
         # rename-invariant behavioral fingerprint: R8 inlining reshuffles a
@@ -124,6 +124,10 @@ def _code_features(c: Class) -> list[tuple[str, float]]:
 
 
 def compute_signature(c: Class) -> Signature:
+    # Prepared records carry the signature precomputed; reuse it verbatim so a
+    # diff off a record is bit-identical to a diff off a fresh parse.
+    if c.signature is not None:
+        return c.signature
     return Signature(
         cls=_simhash(_class_features(c)),
         fld=_simhash(_field_features(c)),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -111,10 +112,53 @@ def _merge_dexes(apk) -> list[Class]:
     return _merge_dexes_from_blobs(list(apk.get_all_dex()))
 
 
-def _merge_dexes_from_blobs(blobs: list[bytes]) -> list[Class]:
+_LENIENCY_PATCHED = False
+
+
+def _patch_dex_leniency() -> None:
+    """Make androguard tolerate hidden-API flag values it doesn't model.
+
+    Memory-dumped / repacked DEX commonly carry `HiddenApiClassDataItem` domain
+    flags outside androguard's strict enum (values 4/6 vs the modeled 0/1/2),
+    which otherwise aborts parsing of the *entire* dex. twinflame never reads
+    these flags, so we install a lenient `_missing_` that maps any unknown value
+    to the enum's zero member. Idempotent; applied lazily at first parse."""
+    global _LENIENCY_PATCHED
+    if _LENIENCY_PATCHED:
+        return
+    _LENIENCY_PATCHED = True
+    try:
+        from androguard.core.dex import HiddenApiClassDataItem
+
+        for name in ("DomapiApiFlag", "RestrictionApiFlag"):
+            enum_cls = getattr(HiddenApiClassDataItem, name, None)
+            if enum_cls is not None:
+                enum_cls._missing_ = classmethod(lambda cls, value: list(cls)[0])
+    except Exception:
+        pass  # older/newer androguard without this section — nothing to patch
+
+
+def _parse_dexes(blobs: list[bytes]):
+    """Parse DEX blobs, skipping any that fail (partial memory dumps have corrupt
+    sections). Warns with the skip count; raises only if *nothing* parses."""
     from androguard.core.dex import DEX
 
-    dexes = [DEX(b) for b in blobs]
+    _patch_dex_leniency()
+    dexes, skipped = [], 0
+    for b in blobs:
+        try:
+            dexes.append(DEX(b))
+        except Exception:
+            skipped += 1
+    if skipped:
+        print(f"loader: skipped {skipped}/{len(blobs)} unparseable dex blob(s)", file=sys.stderr)
+    if not dexes:
+        raise LoadError(f"no parseable DEX among {len(blobs)} blob(s)")
+    return dexes
+
+
+def _merge_dexes_from_blobs(blobs: list[bytes]) -> list[Class]:
+    dexes = _parse_dexes(blobs)
     # Build a whole-app cross-reference graph once. It gives us, per method,
     # both its call targets (B1 anchors) and its incoming-call count (xref),
     # plus the string→class map (B2 anchors). create_xref() is the expensive

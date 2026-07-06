@@ -121,7 +121,46 @@ def _default_output(apk1: Path, apk2: Path, ext: str) -> Path:
     return Path(f"{Path(apk1).stem}__vs__{Path(apk2).stem}.diff.{ext}")
 
 
+def _main_prepare(argv: list[str]) -> int:
+    """`twinflame prepare <sample>` — fingerprint one sample into a reusable,
+    digest-keyed record (parse + signatures + abstract opcodes), so later
+    comparisons skip the expensive parse. See plans/batch-scoring-design.md."""
+    p = argparse.ArgumentParser(
+        prog="twinflame prepare",
+        description="Fingerprint an APK/.dex/dir into a reusable comparison record.",
+    )
+    p.add_argument("sample", type=Path, help="an APK, a .dex file, or a directory of .dex files")
+    p.add_argument("--digest", metavar="SHA256",
+                   help="key the record by this digest (default: sha256 of the input)")
+    p.add_argument("-o", "--output", metavar="PATH", type=Path,
+                   help="record file to write (default: '<digest>.tfr.json' in the cwd)")
+    p.add_argument("--normalize", action="store_true",
+                   help="run Redex LocalDcePass+RegAllocPass before fingerprinting")
+    args = p.parse_args(argv)
+
+    # NB: import the functions directly — the package also exports a *symbol*
+    # named `prepare`, which shadows the submodule under `from . import prepare`.
+    from .loader import LoadError
+    from .prepare import prepare as prepare_sample
+    from .prepare import save as save_record
+
+    t = time.perf_counter()
+    try:
+        rec = prepare_sample(args.sample, digest=args.digest, redex_normalize=args.normalize)
+    except LoadError as e:  # bad input → clean exit
+        raise SystemExit(f"error: {e}")
+    out = args.output or Path(f"{rec.digest}.tfr.json")
+    save_record(rec, out)
+    print(f"prepare: {time.perf_counter() - t:.2f}s ({len(rec.classes)} classes, "
+          f"algo {rec.algo_version})", file=sys.stderr)
+    print(f"wrote: {out} (digest {rec.digest})", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "prepare":
+        return _main_prepare(argv[1:])
     args = _build_parser().parse_args(argv)
 
     t_load_start = time.perf_counter()

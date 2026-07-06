@@ -107,6 +107,34 @@ always included).
 
 ---
 
+## Precompute once, compare many (`prepare`)
+
+The one-shot `twinflame a.apk b.apk` re-parses both APKs every run — and the parse
+(androguard) is the expensive part (tens of seconds per app). For pipelines that
+compare a sample against many others, split the work: fingerprint each sample **once**
+into a reusable, digest-keyed **record**, then compare from records (no re-parse).
+
+```sh
+# fingerprint a sample into a record (parse + signatures + abstract opcodes)
+twinflame prepare sample.apk --digest <sha256> -o sample.tfr.json
+```
+
+A record is **lossless for comparison** — a diff off a record is identical to a diff
+off a fresh parse — and it's version-stamped (`algo_version`), so a stale record is
+rejected rather than silently mis-compared. Loading a record back is ~40× faster than
+re-parsing (0.6 s vs 23 s for an 8 k-class app).
+
+Comparing *from* records is currently the library API (a CLI `compare`/`score` is on
+the roadmap — see `plans/batch-scoring-design.md`):
+
+```python
+from twinflame import load_record, diff
+a = load_record("a.tfr.json"); b = load_record("b.tfr.json")
+matches = diff(list(a.classes), list(b.classes), threshold=0.8)
+```
+
+---
+
 ## Useful flags
 
 | Flag | Use |

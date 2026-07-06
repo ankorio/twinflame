@@ -1,12 +1,15 @@
 # twinflame
 
-DEX-level Android APK class-diffing engine. Given two APK versions, emits a ranked list of class matches with a normalized similarity score so you can isolate exactly which classes mutated between releases. Implements the four-stage architecture from Quarkslab's _"Android Application Diffing: Engine Overview"_ (Czayka & Thomas, 2019).
+DEX/APK **bytecode-level** diffing engine for Android reverse engineers. Matches classes and methods across two builds by *structure* — surviving R8/ProGuard renaming — and emits a ranked, method-localized **change report** (what was added / removed / modified) plus a ProGuard `mapping.txt` to carry recovered names into your decompiler. Implements the four-stage architecture from Quarkslab's _"Android Application Diffing: Engine Overview"_ (Czayka & Thomas, 2019).
 
 Use cases:
 
 - **Vulnerability patch identification** — find the class a vendor changed to fix a flaw.
 - **Repackaging / mod analysis** — find injected code that replaces vendor logic with no-ops or hostile callbacks.
+- **Malware triage / kinship** — find shared code across samples and flag when both implement the same permission-gated component (AccessibilityService, NotificationListener, DeviceAdmin).
 - **Deobfuscation correlation** — pair classes across Proguard-renamed builds.
+
+Inputs can be APKs, single `.dex` files, or directories of dumped `.dex` (memory dumps included). For pipelines that compare a sample against many, `twinflame prepare` fingerprints a sample once into a reusable record so later comparisons skip the expensive parse.
 
 ## Documentation
 
@@ -76,9 +79,11 @@ nix run . -- vuln.apk patched.apk --normalize --find-obfuscated
 
 Each side accepts an APK, a single `.dex`, or a directory of `.dex` files — so
 you can diff **dumped/extracted DEX** (e.g. pulled from memory or an unpacked
-payload) with no surrounding APK, with no flag: the input kind is detected. A
-DEX-only input has no manifest, so `--auto-package` is unavailable — pass
-`--app-package <prefix>` for app-vs-library ranking instead.
+payload) with no surrounding APK, with no flag: the input kind is detected.
+Partial dumps are tolerated — an unparseable or corrupt `.dex` in a directory is
+skipped (with a warning) rather than aborting the load. A DEX-only input has no
+manifest, so `--auto-package` is unavailable — pass `--app-package <prefix>` for
+app-vs-library ranking instead.
 
 ```sh
 # directory of dumped classes*.dex on each side
@@ -89,7 +94,11 @@ twinflame dump_old/ dump_new/ --no-cluster
 twinflame a/ b/ --no-cluster --app-package com.target.app -s changed -f csv -o changes.csv
 ```
 
-Output format (one line per non-perfect match):
+By default, stdout shows a ranked **change summary** (modified / added / removed /
+cosmetic / unchanged, app code first) and any sensitive components both builds
+share, while the full machine report is written to a file (`-f json`, default;
+`csv`/`xml` also available). Pass `-m`/`--matches` for the raw per-class match
+list instead:
 
 ```
 [+] com.acme.foo: Login - Login.java | com.acme.foo: Login - SourceFile -> 0.8523
@@ -101,12 +110,11 @@ Output format (one line per non-perfect match):
 ```
 
 Each `[+]` paired line is followed by the methods that actually changed, so you
-see *which* method moved the class score, not just that the class changed. The
-machine report (written by default; `-f json`) carries the full per-method
-verdict list, plus each paired class's superclass/interfaces and any sensitive
-component it implements (see below).
+see *which* method moved the class score. The machine report carries the full
+per-method verdict list, plus each paired class's superclass/interfaces and any
+sensitive component it implements.
 
-Timings go to stderr; the diff itself to stdout (so you can `| less` or redirect freely).
+Timings go to stderr; the report to stdout (so you can `| less` or redirect freely).
 
 #### Worked example
 

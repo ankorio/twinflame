@@ -15,3 +15,6 @@ result-*
 .envrc.local
 *.apk
 .venv/
+
+# internal design notes — kept local, not published
+plans/

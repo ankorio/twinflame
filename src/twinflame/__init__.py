@@ -12,6 +12,7 @@ from .model import (
     Pool,
     Signature,
 )
+from .prepare import PreparedRecord, load_record, prepare, save
 
 __all__ = [
     "App",
@@ -22,10 +23,14 @@ __all__ = [
     "Method",
     "MethodMatch",
     "Pool",
+    "PreparedRecord",
     "Signature",
     "diff",
     "filter",
     "load",
+    "load_record",
+    "prepare",
+    "save",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.1.0b1"

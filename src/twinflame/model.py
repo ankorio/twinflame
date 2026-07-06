@@ -58,6 +58,11 @@ class Method:
     # call site, so once the caller method is matched, the Nth thing it
     # instantiates is still (usually) the Nth on the other side.
     instantiates: tuple[str, ...] = ()
+    # Precomputed abstract-opcode sequence (categorize(bytecode)). Populated by
+    # `prepare` so a persisted record can drop the raw `bytecode` and still feed
+    # the signature + Levenshtein paths. `None` on a freshly-parsed method (the
+    # abstract seq is derived from `bytecode` on demand — see opcodes.method_categories).
+    abstract: Optional[bytes] = None
 
     @property
     def order_key(self) -> int:
@@ -84,6 +89,9 @@ class Class:
     # for synthetic/test classes that don't set them.
     superclass: Optional[str] = None
     interfaces: tuple[str, ...] = ()
+    # Precomputed 128-bit structural signature (compute_signature). Populated by
+    # `prepare`; `None` on fresh parse (computed on demand at diff time).
+    signature: Optional["Signature"] = None
 
     @property
     def info(self) -> str:

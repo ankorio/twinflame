@@ -147,3 +147,10 @@ CATEGORY: bytes = _build_table()
 def categorize(bytecode: bytes) -> bytes:
     """Map a raw opcode stream through CATEGORY in one pass."""
     return bytes(CATEGORY[b] for b in bytecode)
+
+
+def method_categories(m) -> bytes:
+    """Abstract-opcode sequence for a method: the cached `abstract` when the
+    method came from a prepared record (raw bytecode dropped), else derived from
+    `bytecode` on demand. Both paths yield the identical byte sequence."""
+    return m.abstract if m.abstract is not None else categorize(m.bytecode)

@@ -4,7 +4,7 @@ from collections import Counter
 
 from ._hot import levenshtein_bytes
 from .model import AccessFlag, Class, Method, MethodMatch
-from .opcodes import categorize
+from .opcodes import method_categories
 
 
 BYTECODE_WEIGHT = 0.6
@@ -21,7 +21,11 @@ MIN_METHOD_PAIR_SCORE = 0.4
 
 def abstract_sequence(c: Class) -> bytes:
     methods = sorted(c.methods, key=lambda m: m.order_key)
-    parts = [categorize(m.bytecode) for m in methods if m.bytecode]
+    # Include a method's abstract seq iff it has real code. `method_categories`
+    # returns the cached `abstract` (prepared record) or categorize(bytecode)
+    # (fresh parse); both are empty exactly when the method has no bytecode, so
+    # this matches the old `if m.bytecode` filter without needing raw bytecode.
+    parts = [seq for m in methods if (seq := method_categories(m))]
     return b"".join(parts)
 
 
@@ -79,8 +83,8 @@ def method_similarity(a: Method, b: Method) -> float:
     Abstract-opcode Levenshtein dominates; prototype (return type + arg count)
     and the incoming-call count (xref) refine it. Identical methods score 1.0.
     """
-    cat_a = categorize(a.bytecode)
-    cat_b = categorize(b.bytecode)
+    cat_a = method_categories(a)
+    cat_b = method_categories(b)
     if not cat_a and not cat_b:
         bytecode_sim = 1.0
     else:
