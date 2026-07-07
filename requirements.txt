@@ -1,0 +1,6 @@
+# Runtime dependencies (mirrors [project].dependencies in pyproject.toml).
+# Present so GitHub's dependency graph / Dependabot can read them; the
+# authoritative source for installs remains pyproject.toml (`pip install .`).
+androguard>=4.1
+numpy>=1.26
+rapidfuzz>=3.14
