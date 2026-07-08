@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sys
+from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from .model import AccessFlag, App, Class, Field, ManifestInfo, Method
 
@@ -108,10 +109,6 @@ def _collect_dex_files(paths) -> list[Path]:
     return out
 
 
-def _merge_dexes(apk) -> list[Class]:
-    return _merge_dexes_from_blobs(list(apk.get_all_dex()))
-
-
 _LENIENCY_PATCHED = False
 
 
@@ -157,110 +154,126 @@ def _parse_dexes(blobs: list[bytes]):
     return dexes
 
 
+# Bump when the extraction semantics change what lands in Method/Class fields
+# (folded into prepare.ALGO_VERSION so stale prepared records regenerate).
+# 2: direct operand extraction replaced androguard Analysis; array-receiver
+#    calls are now kept faithfully ("[LA;->clone()..." instead of the old
+#    layer's "LA;->..." rewrite, primitive-array clones no longer dropped).
+EXTRACTION_VERSION = 2
+
+# Opcodes whose reference operand the extraction walk resolves. The invoke set
+# mirrors androguard's create_xref exactly (invoke-kind 0x6E-0x72 and
+# invoke-kind/range 0x74-0x78) so call refs stay comparable with records
+# produced by the old Analysis-based loader.
+INVOKE_OPCODES = frozenset(range(0x6E, 0x73)) | frozenset(range(0x74, 0x79))
+CONST_STRING_OPCODES = frozenset({0x1A, 0x1B})  # const-string, const-string/jumbo
+NEW_INSTANCE_OPCODE = 0x22
+
+
+class _RawMethod(NamedTuple):
+    """Everything one instruction walk yields for a method, before the
+    app-wide incoming-call tally (xref_count) is known."""
+
+    name: str
+    descriptor: str
+    access: AccessFlag
+    bytecode: bytes
+    opcode_xor: int
+    calls: tuple[str, ...]
+    instantiates: tuple[str, ...]
+    strings: tuple[str, ...]
+
+
 def _merge_dexes_from_blobs(blobs: list[bytes]) -> list[Class]:
     dexes = _parse_dexes(blobs)
-    # Build a whole-app cross-reference graph once. It gives us, per method,
-    # both its call targets (B1 anchors) and its incoming-call count (xref),
-    # plus the string→class map (B2 anchors). create_xref() is the expensive
-    # step; it's acceptable for a POC and degrades gracefully if unavailable.
-    analysis = _build_analysis(dexes)
-    strings_by_class = _strings_by_class(analysis)
-
+    # One instruction walk per method extracts everything the models need:
+    # opcodes, invoke targets (B1 anchors / feature deltas), const-strings
+    # (B2 anchors), and new-instance targets. Incoming-call counts need the
+    # whole app, so Class assembly happens in a second pass once every call
+    # edge is tallied. This replaces androguard's Analysis/create_xref layer,
+    # which recomputed the same three facts ~9x slower via a full object
+    # graph — and silently zeroed them all whenever it failed to build.
     seen_descriptors: set[str] = set()
-    out: list[Class] = []
+    pending: list[tuple[object, str, list[_RawMethod]]] = []
+    call_tally: Counter[str] = Counter()
     for dex in dexes:
         for cdi in dex.get_classes():
             descriptor = cdi.get_name()
             if descriptor in seen_descriptors:
                 continue
             seen_descriptors.add(descriptor)
-            out.append(_wrap_class(cdi, analysis, strings_by_class.get(descriptor, ())))
-    return out
+            raws = [_extract_method(m) for m in cdi.get_methods()]
+            for raw in raws:
+                call_tally.update(raw.calls)
+            pending.append((cdi, descriptor, raws))
+    return [_wrap_class(cdi, desc, raws, call_tally) for cdi, desc, raws in pending]
 
 
-def _build_analysis(dexes):
-    """Construct an androguard Analysis with xrefs, or None on any failure."""
-    try:
-        from androguard.core.analysis.analysis import Analysis
-
-        analysis = Analysis()
-        for dex in dexes:
-            analysis.add(dex)
-        analysis.create_xref()
-        return analysis
-    except Exception:
-        # Version skew or pathological input: fall back to no enrichment.
-        # calls/strings stay empty and xref_count stays 0 (pre-M1.2 behavior).
-        return None
-
-
-def _strings_by_class(analysis) -> dict[str, tuple[str, ...]]:
-    """Map class descriptor -> the string constants referenced from it."""
-    if analysis is None:
-        return {}
-    acc: dict[str, set[str]] = {}
-    try:
-        strings = analysis.get_strings()
-    except Exception:
-        return {}
-    for sa in strings:
+def _extract_method(em) -> _RawMethod:
+    """Walk a method's instructions once, collecting opcodes and operands."""
+    opcodes = bytearray()
+    opcode_xor = 0
+    calls: list[str] = []
+    instantiates: list[str] = []
+    strings: list[str] = []
+    if em.get_code() is not None:
         try:
-            value = sa.get_value()
+            for ins in em.get_instructions():
+                op = ins.get_op_value()
+                if op is None:
+                    continue
+                opcodes.append(op & 0xFF)
+                opcode_xor ^= op & 0xFF
+                if op in INVOKE_OPCODES:
+                    ref = _operand_ref(ins)
+                    if ref:
+                        calls.append(ref)
+                elif op == NEW_INSTANCE_OPCODE:
+                    ref = _operand_ref(ins)
+                    if ref:
+                        instantiates.append(ref)
+                elif op in CONST_STRING_OPCODES:
+                    ref = _operand_ref(ins)
+                    if ref is not None:  # keep "" — a const-string can be empty
+                        strings.append(ref)
         except Exception:
-            continue
-        if value is None:
-            continue
-        for ref in _safe_xref_iter(sa, "get_xref_from"):
-            cls_desc = _ref_class_descriptor(ref)
-            if cls_desc:
-                acc.setdefault(cls_desc, set()).add(value)
-    return {k: tuple(sorted(v)) for k, v in acc.items()}
+            # Some pathological DEX files have unparseable instruction
+            # streams. Treat the body as empty rather than failing the load.
+            opcodes = bytearray()
+            opcode_xor = 0
+            calls = []
+            instantiates = []
+            strings = []
+    return _RawMethod(
+        name=em.get_name(),
+        descriptor=em.get_descriptor(),
+        access=AccessFlag(em.get_access_flags() & 0x3FFFF),
+        bytecode=bytes(opcodes),
+        opcode_xor=opcode_xor,
+        calls=tuple(calls),
+        instantiates=tuple(instantiates),
+        strings=tuple(strings),
+    )
 
 
-def _safe_xref_iter(obj, attr):
-    """Yield xref entries from an androguard analysis object, tolerantly."""
-    fn = getattr(obj, attr, None)
-    if fn is None:
-        return
-    try:
-        entries = fn()
-    except Exception:
-        return
-    for entry in entries or ():
-        yield entry
+def _operand_ref(ins) -> str | None:
+    """The resolved reference operand of an instruction, or None.
 
-
-def _ref_class_descriptor(ref) -> str | None:
-    """Pull the class descriptor out of an xref tuple/object, defensively.
-
-    androguard xref entries are typically (ClassAnalysis, MethodAnalysis,
-    offset) tuples, but exact shapes vary by version — so we probe.
+    `get_operands(0)` returns register tuples plus one table-reference tuple
+    `(kind, index, resolved)`; the resolved element is "Lcls;->name(args)ret"
+    for invoke-*, the class descriptor for new-instance, and the value for
+    const-string.
     """
-    candidate = ref[0] if isinstance(ref, (tuple, list)) and ref else ref
-    for getter in ("get_vm_class", "get_class"):
-        fn = getattr(candidate, getter, None)
-        if fn is not None:
-            try:
-                cls = fn()
-                name = cls.get_name() if hasattr(cls, "get_name") else None
-                if name:
-                    return name
-            except Exception:
-                pass
-    # Some shapes expose the class name directly on the analysis object.
-    for getter in ("get_name", "class_name"):
-        fn = getattr(candidate, getter, None)
-        try:
-            name = fn() if callable(fn) else fn
-        except Exception:
-            name = None
-        if isinstance(name, str) and name.startswith("L"):
-            return name
+    try:
+        for operand in ins.get_operands(0):
+            if isinstance(operand, tuple) and len(operand) == 3 and isinstance(operand[2], str):
+                return operand[2]
+    except Exception:
+        pass
     return None
 
 
-def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
-    descriptor = cdi.get_name()
+def _wrap_class(cdi, descriptor: str, raws: list[_RawMethod], call_tally: Counter) -> Class:
     package, name = _split_descriptor(descriptor)
     access = AccessFlag(cdi.get_access_flags() & 0x3FFFF)
     # `cdi.get_source_ext()` routes through `CM.decompiler_ob` which is
@@ -273,8 +286,14 @@ def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
         except Exception:
             source_file = None
 
-    methods = tuple(_wrap_method(m, analysis) for m in cdi.get_methods())
+    # A method's own ref key is built exactly like a callee ref out of the
+    # operand table ("Lcls;->name(args)ret"), so the tally lookup is exact.
+    methods = tuple(
+        _wrap_method(raw, call_tally.get(f"{descriptor}->{raw.name}{raw.descriptor}", 0))
+        for raw in raws
+    )
     fields = tuple(_wrap_field(f) for f in cdi.get_fields())
+    strings = tuple(sorted({s for raw in raws for s in raw.strings}))
 
     is_inner = "$" in name
     is_synthetic = bool(access & AccessFlag.SYNTHETIC)
@@ -303,136 +322,21 @@ def _wrap_class(cdi, analysis=None, strings: tuple[str, ...] = ()) -> Class:
     )
 
 
-NEW_INSTANCE_OPCODE = 0x22
-
-
-def _new_instance_target(ins) -> str | None:
-    """Class descriptor a `new-instance` instruction targets, or None.
-
-    `get_operands(0)` returns operand tuples; the type/string-reference one
-    is `(kind, index, resolved_string)` — pull the resolved descriptor
-    directly rather than parsing `get_output()` text.
-    """
-    try:
-        for operand in ins.get_operands(0):
-            if isinstance(operand, tuple) and len(operand) == 3 and isinstance(operand[2], str):
-                return operand[2]
-    except Exception:
-        pass
-    return None
-
-
-def _wrap_method(em, analysis=None) -> Method:
-    name = em.get_name()
-    descriptor = em.get_descriptor()  # e.g. "(II)V"
-    access = AccessFlag(em.get_access_flags() & 0x3FFFF)
-    arg_count, return_type = _parse_proto(descriptor)
-
-    opcodes = bytearray()
-    opcode_xor = 0
-    instantiates: list[str] = []
-    code = em.get_code()
-    if code is not None:
-        try:
-            for ins in em.get_instructions():
-                op = ins.get_op_value()
-                if op is None:
-                    continue
-                opcodes.append(op & 0xFF)
-                opcode_xor ^= op & 0xFF
-                if op == NEW_INSTANCE_OPCODE:
-                    target = _new_instance_target(ins)
-                    if target:
-                        instantiates.append(target)
-        except Exception:
-            # Some pathological DEX files have unparseable instruction
-            # streams. Treat the body as empty rather than failing the load.
-            opcodes = bytearray()
-            opcode_xor = 0
-            instantiates = []
-
-    calls, xref_count = _method_calls_and_xrefs(em, analysis)
-
+def _wrap_method(raw: _RawMethod, xref_count: int) -> Method:
+    arg_count, return_type = _parse_proto(raw.descriptor)
     return Method(
-        name=name,
-        descriptor=descriptor,
-        access=access,
+        name=raw.name,
+        descriptor=raw.descriptor,
+        access=raw.access,
         arg_count=arg_count,
         return_type=return_type,
         xref_count=xref_count,
-        bytecode=bytes(opcodes),
-        instr_count=len(opcodes),
-        opcode_xor=opcode_xor,
-        calls=calls,
-        instantiates=tuple(instantiates),
+        bytecode=raw.bytecode,
+        instr_count=len(raw.bytecode),
+        opcode_xor=raw.opcode_xor,
+        calls=raw.calls,
+        instantiates=raw.instantiates,
     )
-
-
-def _method_calls_and_xrefs(em, analysis) -> tuple[tuple[str, ...], int]:
-    """Return (call-target refs, incoming-call count) for a method.
-
-    Both come from the androguard Analysis cross-reference graph. Defensive
-    throughout: any version-shape mismatch yields ((), 0) rather than failing
-    the whole load.
-    """
-    if analysis is None:
-        return (), 0
-    mca = None
-    try:
-        mca = analysis.get_method(em)
-    except Exception:
-        mca = None
-    if mca is None:
-        return (), 0
-
-    calls: list[str] = []
-    for entry in _safe_xref_iter(mca, "get_xref_to"):
-        ref = _callee_ref(entry)
-        if ref:
-            calls.append(ref)
-
-    xref_count = sum(1 for _ in _safe_xref_iter(mca, "get_xref_from"))
-    return tuple(calls), xref_count
-
-
-def _callee_ref(entry) -> str | None:
-    """Build "Lcls;->name(desc)ret" for a callee in an xref_to entry.
-
-    An xref_to entry is (ClassAnalysis, MethodAnalysis, offset); the callee is
-    the middle element. androguard's MethodAnalysis exposes the name/class/
-    descriptor as both properties and `get_*` accessors depending on version,
-    so we probe both forms.
-    """
-    if isinstance(entry, (tuple, list)):
-        target = entry[1] if len(entry) >= 2 else (entry[0] if entry else None)
-    else:
-        target = entry
-    if target is None:
-        return None
-    name = _read_attr(target, "name", "get_name")
-    if not name:
-        return None
-    cls = _read_attr(target, "class_name", "get_class_name")
-    desc = _read_attr(target, "descriptor", "get_descriptor")
-    return f"{cls}->{name}{desc}"
-
-
-def _read_attr(obj, *names) -> str:
-    """Read the first attribute that resolves to a non-empty string.
-
-    Each name may be a plain attribute/property or a zero-arg method.
-    """
-    for n in names:
-        val = getattr(obj, n, None)
-        if val is None:
-            continue
-        try:
-            val = val() if callable(val) else val
-        except Exception:
-            continue
-        if isinstance(val, str) and val:
-            return val
-    return ""
 
 
 def _wrap_field(ef) -> Field:

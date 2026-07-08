@@ -27,6 +27,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional
 
+from .loader import EXTRACTION_VERSION
 from .model import AccessFlag, App, Class, Field, ManifestInfo, Method, Signature
 from .opcodes import CATEGORY, categorize
 from .signature import (
@@ -51,7 +52,7 @@ def _algo_version() -> str:
     the signature parameters and the opcode-category table. If any of these
     change, existing records are stale and must be regenerated."""
     material = repr((
-        RECORD_VERSION, PARTIAL_BITS, SIGNATURE_BITS, DEFAULT_SEED,
+        RECORD_VERSION, EXTRACTION_VERSION, PARTIAL_BITS, SIGNATURE_BITS, DEFAULT_SEED,
         SUPER_WEIGHT, IFACE_WEIGHT, CALL_WEIGHT_MULT,
         N_PERMUTATIONS_DEFAULT, BUCKET_PREFIX_BITS_DEFAULT,
     )).encode() + bytes(CATEGORY)

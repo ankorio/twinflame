@@ -100,21 +100,55 @@ def _build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _load_side(positional, *, redex_normalize: bool, n: int):
-    """Resolve one side's input into an `App`. A directory or a .dex file is loaded
-    as raw DEX (dumped content); otherwise it's parsed as an APK. Exits cleanly
-    (no traceback) on bad input."""
+def _resolve_side(positional, redex_normalize: bool):
+    """Resolve one side's input into an `App`. A directory or a .dex file is
+    loaded as raw DEX (dumped content); otherwise it's parsed as an APK.
+    Module-level (not nested) so the parallel path can send it to a worker
+    process; raises `LoadError` — the caller turns that into a clean exit."""
+    p = Path(positional)
+    if p.is_dir() or p.suffix.lower() == ".dex":
+        return api.load_dex([p])
+    return api.load(p, redex_normalize=redex_normalize)
+
+
+def _load_sides(args):
+    """Load both inputs, in two worker processes when allowed (`-j` >= 2).
+
+    Parsing dominates wall time and the sides are independent, so the
+    parallel path roughly halves the load phase. Falls back to in-process
+    sequential loading under `-j 1` or if the pool can't deliver (e.g. a
+    worker killed by the OOM killer)."""
     from .loader import LoadError
 
-    if positional is None:
-        raise SystemExit(f"error: side {n} has no input — pass an APK, a .dex file, or a directory of .dex files")
-    try:
-        p = Path(positional)
-        if p.is_dir() or p.suffix.lower() == ".dex":
-            return api.load_dex([p])
-        return api.load(p, redex_normalize=redex_normalize)
-    except LoadError as e:
-        raise SystemExit(f"error: side {n}: {e}")
+    for n, positional in ((1, args.apk1), (2, args.apk2)):
+        if positional is None:
+            raise SystemExit(f"error: side {n} has no input — pass an APK, a .dex file, or a directory of .dex files")
+
+    if args.jobs >= 2:
+        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures.process import BrokenProcessPool
+
+        try:
+            with ProcessPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(_resolve_side, side, args.normalize)
+                           for side in (args.apk1, args.apk2)]
+                apps = []
+                for n, fut in enumerate(futures, 1):
+                    try:
+                        apps.append(fut.result())
+                    except LoadError as e:
+                        raise SystemExit(f"error: side {n}: {e}")
+            return apps[0], apps[1]
+        except BrokenProcessPool:
+            print("load: worker pool died, retrying sequentially", file=sys.stderr)
+
+    apps = []
+    for n, side in ((1, args.apk1), (2, args.apk2)):
+        try:
+            apps.append(_resolve_side(side, args.normalize))
+        except LoadError as e:
+            raise SystemExit(f"error: side {n}: {e}")
+    return apps[0], apps[1]
 
 
 def _default_output(apk1: Path, apk2: Path, ext: str) -> Path:
@@ -164,8 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     t_load_start = time.perf_counter()
-    lhs_app = _load_side(args.apk1, redex_normalize=args.normalize, n=1)
-    rhs_app = _load_side(args.apk2, redex_normalize=args.normalize, n=2)
+    lhs_app, rhs_app = _load_sides(args)
     t_load = time.perf_counter() - t_load_start
     print(f"load: {t_load:.2f}s ({len(lhs_app.classes)} lhs / {len(rhs_app.classes)} rhs classes)", file=sys.stderr)
 
