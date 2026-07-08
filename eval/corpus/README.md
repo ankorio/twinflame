@@ -10,15 +10,79 @@ repo checkout (`../corpus/` relative to this repo root), which is not itself a g
 
 | Corpus | Kind | Oracle | Grades (use case) |
 |---|---|---|---|
-| CalculatorM3 | real R8 double-build | `mapping.txt` | rename recovery (UC3), method matching |
-| Fossify Contacts | built here (below) | `mapping.txt` | rename recovery (UC3) — **second corpus** |
-| BlackyHawky Clock | built here (below) | `mapping.txt` | rename recovery (UC3) |
-| OpenCamera | built here (below) | `mapping.txt` | rename recovery (UC3) |
-| private benchmark app (2 releases) | supplied binaries | none (unlabeled) | version change (UC1) — spot-check only |
+| BlackyHawky Clock | built here (OSS matrix) | `mapping.txt` | version change (UC1) + obfuscation axis |
+| Fossify Contacts | built here (OSS matrix) | `mapping.txt` | version change (UC1) + obfuscation axis |
+| CalculatorM3 (Compose) | built here (OSS matrix) | `mapping.txt` | version change (UC1) + obfuscation axis |
+| private benchmark app (2 releases) | supplied binaries | none (unlabeled) | version change (UC1) — perf/accuracy at scale |
+| large public app, 2 versions (Telegram) | supplied binaries | none (unlabeled) | scale + change classifier |
+| two dex-dumps from memory | extracted DEX dirs | none (unlabeled) | cross-sample kinship (component match) |
 
-The buildable OSS apps are the important unlock: because we control the build we get a
+The buildable OSS apps are the calibration set: because we control the build we get a
 `mapping.txt` oracle for free, **and** we can rebuild the same source to measure the
-change-detection *noise floor* (see `../../plans/change-detection-roadmap.md`, E-2).
+change-detection *noise floor* (see `../../plans/change-detection-roadmap.md`, E-2). The two
+supplied-binary apps (no source, no oracle) are for **performance + accuracy at scale**, not
+calibration; the dex-dumps are the cross-sample kinship test (no bijection).
+
+## OSS calibration matrix — persistent build tree (built 2026-07-08)
+
+The three OSS apps are now built **once** into a persistent, indexable tree so benchmarks never
+rebuild. Layout (lives in the non-git working area `../corpus/`, i.e. outside this repo):
+
+```
+corpus/oss_matrix/<project>/<version>/<profile>/{app.apk,mapping.txt}
+```
+
+- **projects / versions** (adjacent releases = the realistic UC1 gap): `clock` 2.30→2.31
+  (`com.best.deskclock`), `contacts` 1.5.0→1.6.0 (`org.fossify.contacts`), `calc` v1.4.3→v1.5.2
+  (`com.vagujhelyigergely.calculatorm3`, Compose).
+- **profiles** (R8 strength axis, applied by appending `profiles/<p>.pro` to `app/proguard-rules.pro`):
+  `lax` (`-dontoptimize`, rename+shrink only), `optimize` (the app's shipped `-optimize` config),
+  `strict` (`-allowaccessmodification -repackageclasses ''`, full flattening).
+
+3 projects × 2 versions × 3 profiles = **18 `{app.apk, mapping.txt}` pairs**. This lets any run
+pick load pairs without rebuilding: **cross-version at a fixed profile = UC1**; **cross-profile at
+a fixed version = the obfuscation/optimization axis**; both together = worst case.
+
+### Supplied-binary apps (no source, no oracle) — `corpus/supplied_apps/<app>/<version>/app.apk`
+
+Two-version pairs of real apps we don't build, used for **performance + accuracy at scale**, not
+calibration (no `mapping.txt`, so no P/R/F1). Same `app.apk` filename convention as the matrix:
+
+| app | versions | notes |
+|---|---|---|
+| `cartera` | 1.8.2, 1.9.1 | private benchmark app (`cat.atm.cartera`), R8-renamed, ~2.5-mo cross-toolchain gap |
+| `telegram` | 12.7.2, 12.8.3 | large public app (~145 MB, ~40k classes/side); app code not name-obfuscated |
+| `ms_authenticator` | 6.2603.1485, 6.2606.4246 | `com.azure.authenticator`, single universal APKs (10 dex each) |
+| `twitter` | 12.0.0, 12.5.0 | very large (~210k classes). Downloaded as `.apkm` (APKMirror split bundle); `app.apk` is the extracted `base.apk` (the only DEX-carrying part — config splits `arm64_v8a`/`en`/`xxhdpi` have no code). The original `.apkm` is kept alongside for provenance. |
+
+### Cross-sample kinship — `corpus/dex_dump_sample/`
+
+Extracted DEX directories (dumped from memory), no APK/manifest. Not a version pair — the
+cross-sample kinship test (UC2: find shared implementation with no bijection). Loaded via
+`load_dex` on the directory. See `refs.txt` for the target components to match.
+
+**Reproduce:** `corpus/scripts/build_matrix.sh` (checks out each tag, delegates to `build_profiles.sh` for
+the three profiles). Toolchain used: JDK 21, Android SDK platforms 34–36, each app's own Gradle
+wrapper (9.6.1 / 8.13 / 8.9). CalculatorM3's release build needs a signing config; a throwaway
+keystore + `keystore.properties` (both gitignored) are staged in its checkout — R8/`mapping.txt`
+are unaffected, we only read DEX.
+
+**Parse-verified class counts (new loader, 2026-07-08)** — confirm the profiles are genuinely
+distinct (optimization inlines/merges a large fraction away; layout obf barely moves class count):
+
+| project | version | lax | optimize | strict |
+|---|---|---|---|---|
+| clock | 2.30 | 6047 | 2599 | 2599 |
+| clock | 2.31 | 6079 | 2615 | 2615 |
+| contacts | 1.5.0 | 11035 | 11035 | 11021 |
+| contacts | 1.6.0 | 11061 | 11061 | 11044 |
+| calc | v1.4.3 | 4472 | 2199 | 2093 |
+| calc | v1.5.2 | 10244 | 5327 | 5136 |
+
+> **P/R/F1 + perf benchmarking of the current (post-Analysis-drop) loader across this matrix is
+> pending** — driver staged at `corpus/scripts/bench_matrix.py` (UC1 + obfuscation-axis rows, mapping-join
+> oracle). The historical result sections below were measured 2026-07-05 on the *previous* loader
+> and a subset of these builds; they stand as the baseline the new run is compared against.
 
 ## Benchmark snapshot (2026-07-05, `--assignment auto`, boilerplate filter on)
 
