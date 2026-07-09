@@ -28,6 +28,10 @@ def _build_parser() -> argparse.ArgumentParser:
             "                               every later comparison); see prepare --help\n"
             "  twinflame compare <a> <b>    alias of the default diff — reads .tfr\n"
             "                               records, APKs, .dex, or any mix\n"
+            "  twinflame score <fam> <cand> [WIP] Tier-1 containment score (family\n"
+            "                               ⊆ candidate) for kinship triage —\n"
+            "                               experimental, uncalibrated; see\n"
+            "                               score --help\n"
             "  twinflame migrate <paths>    refresh stale/legacy records in place\n"
             "                               (no re-parse) where possible; see\n"
             "                               migrate --help\n"
@@ -213,6 +217,89 @@ def _main_prepare(argv: list[str]) -> int:
     return 0
 
 
+def _main_score(argv: list[str]) -> int:
+    """`twinflame score <family> <candidate>` — Tier-1 containment: how much of
+    the family's code is structurally present in the candidate, as a scalar off
+    prepared records (or APK/.dex, resolved like the diff path). See
+    plans/batch-scoring-design.md. This is the malware-triage primitive:
+    confirm/score a flagged candidate against a known family seed.
+
+    ⚠️ WORK IN PROGRESS / EXPERIMENTAL — the self-containment anchor is 1.0 and
+    the score is asymmetric as intended, but a trustworthy family-vs-benign
+    threshold depends on the unbuilt library dictionary (M3.3) and uncalibrated
+    knobs. Emits a stderr notice on every run."""
+    p = argparse.ArgumentParser(
+        prog="twinflame score",
+        description="[WIP/experimental] Containment score (family ⊆ candidate) off "
+                    "two samples. Uncalibrated — see plans/batch-scoring-design.md.",
+    )
+    p.add_argument("family", type=Path,
+                   help="the known family/seed: a .tfr record, APK, .dex, or dir")
+    p.add_argument("candidate", type=Path,
+                   help="the sample under test: same input kinds as family")
+    from .score import DEFAULT_MATCH_RADIUS
+    p.add_argument("-R", "--radius", type=int, default=None,
+                   help="Hamming radius for 'same class' on the 128-bit signature "
+                        f"(default {DEFAULT_MATCH_RADIUS})")
+    p.add_argument("--keep-library", dest="drop_library", action="store_false", default=True,
+                   help="do NOT drop known-library classes from the family side "
+                        "(default: drop them, so shared libs don't inflate the score)")
+    p.add_argument("--min-shared-calls", type=int, default=0, metavar="N",
+                   help="require a matched candidate class to share >= N framework calls "
+                        "with the family class (precision gate; 0 = off, signature only)")
+    p.add_argument("--evidence", type=int, metavar="N", default=0,
+                   help="also print the N closest shared class pairs")
+    p.add_argument("--json", action="store_true", help="emit the result as JSON")
+    p.add_argument("--normalize", action="store_true",
+                   help="run Redex before fingerprinting any APK/.dex input")
+    args = p.parse_args(argv)
+
+    from . import score as score_mod
+    from .loader import LoadError
+
+    print("warning: `score` is experimental/WIP — the self-containment anchor is "
+          "reliable, but family-vs-benign thresholds are uncalibrated and depend on "
+          "the not-yet-built library dictionary (M3.3). Treat results as indicative.",
+          file=sys.stderr)
+
+    radius = args.radius if args.radius is not None else DEFAULT_MATCH_RADIUS
+    t = time.perf_counter()
+    try:
+        fam_app = _resolve_side(args.family, args.normalize)
+        cand_app = _resolve_side(args.candidate, args.normalize)
+    except LoadError as e:
+        raise SystemExit(f"error: {e}")
+
+    result = score_mod.containment(
+        list(fam_app.classes), list(cand_app.classes),
+        radius=radius, drop_library=args.drop_library,
+        min_shared_calls=args.min_shared_calls,
+    )
+
+    if args.json:
+        import json
+        payload = {
+            "score": round(result.score, 6),
+            "present": result.present, "total": result.total,
+            "weight_present": result.weight_present, "weight_total": result.weight_total,
+            "radius": radius,
+        }
+        if args.evidence:
+            payload["evidence"] = [
+                {"family": f, "candidate": c, "distance": d}
+                for f, c, d in result.evidence[:args.evidence]
+            ]
+        print(json.dumps(payload))
+    else:
+        print(f"containment: {result.score:.4f}  "
+              f"({result.present}/{result.total} family classes present, "
+              f"weight {result.weight_present}/{result.weight_total})")
+        for f, c, d in result.evidence[:args.evidence]:
+            print(f"  {f}  ~  {c}  (Δ{d})")
+    print(f"score: {time.perf_counter() - t:.2f}s (radius {radius})", file=sys.stderr)
+    return 0
+
+
 def _main_migrate(argv: list[str]) -> int:
     """`twinflame migrate <paths>` — bring prepared records up to the running
     code's layer stamps without re-parsing the samples, where possible:
@@ -285,6 +372,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "prepare":
         return _main_prepare(argv[1:])
+    if argv and argv[0] == "score":
+        return _main_score(argv[1:])
     if argv and argv[0] == "migrate":
         return _main_migrate(argv[1:])
     if argv and argv[0] == "compare":
