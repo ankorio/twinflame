@@ -6,10 +6,10 @@ Use cases:
 
 - **Vulnerability patch identification** — find the class a vendor changed to fix a flaw.
 - **Repackaging / mod analysis** — find injected code that replaces vendor logic with no-ops or hostile callbacks.
-- **Malware triage / kinship** — find shared code across samples and flag when both implement the same permission-gated component (AccessibilityService, NotificationListener, DeviceAdmin).
+- **Malware triage / kinship** — find shared code across samples and flag when both implement the same permission-gated component (AccessibilityService, NotificationListener, DeviceAdmin). `twinflame score` (experimental) condenses this to a single containment number — how much of a known family's code is present in a candidate — cheap enough to confirm a prefilter hit without diffing the whole corpus.
 - **Deobfuscation correlation** — pair classes across Proguard-renamed builds.
 
-Inputs can be APKs, single `.dex` files, or directories of dumped `.dex` (memory dumps included). For pipelines that compare a sample against many, `twinflame prepare` fingerprints a sample once into a reusable record so later comparisons skip the expensive parse.
+Inputs can be APKs, single `.dex` files, or directories of dumped `.dex` (memory dumps included). For pipelines that compare a sample against many, `twinflame prepare` fingerprints a sample once into a packed binary record (`.tfr`, ~20× smaller than JSON) that any diff accepts in place of the APK — record-vs-record compares run about 2× faster end-to-end. `twinflame migrate` upgrades a prepared corpus in place across releases where the stale layer is recomputable, so a large record DB doesn't have to be rebuilt from the original samples.
 
 ## Documentation
 
@@ -158,7 +158,7 @@ For interactive use (REPL, hacking on the code, running tests):
 
 ```sh
 nix develop            # enter shell with python + redex + jadx on PATH
-pytest tests/          # 86 tests, ~8s
+pytest tests/          # 265 tests, ~5s
 python -m twinflame.cli --help
 ```
 
@@ -237,6 +237,16 @@ Prints true/false positive & negative class-match counts plus precision/recall/F
 | [src/twinflame/accurate.py](src/twinflame/accurate.py)   | Abstract opcodes, method-level + class scoring, greedy 1-to-1 assignment |
 | [src/twinflame/opcodes.py](src/twinflame/opcodes.py)     | Dalvik opcode → 13-category lookup table                             |
 | [src/twinflame/\_hot.py](src/twinflame/_hot.py)          | Hot loops (popcount, Hamming, rapidfuzz-backed Levenshtein)          |
+| [src/twinflame/parallel.py](src/twinflame/parallel.py)   | ProcessPool helpers for parallel pool comparison / side loading      |
+| [src/twinflame/prepare.py](src/twinflame/prepare.py)     | Packed `.tfr` record codec: `prepare` / `migrate`, per-layer versioning |
+| [src/twinflame/propagate.py](src/twinflame/propagate.py) | Type-graph match-propagation cascade over confirmed pairs           |
+| [src/twinflame/features.py](src/twinflame/features.py)   | Semantic feature layer feeding change classification                 |
+| [src/twinflame/changes.py](src/twinflame/changes.py)     | Change classifier: typed, ranked change report from raw matches      |
+| [src/twinflame/provenance.py](src/twinflame/provenance.py) | App vs. bundled-library class discrimination                       |
+| [src/twinflame/boilerplate.py](src/twinflame/boilerplate.py) | Generated-boilerplate (structural-twin) detection                |
+| [src/twinflame/components.py](src/twinflame/components.py) | Sensitive-component detection (AccessibilityService & co.)         |
+| [src/twinflame/score.py](src/twinflame/score.py)         | Tier-1 containment scoring, `twinflame score` (experimental)         |
+| [src/twinflame/report.py](src/twinflame/report.py)       | Machine-report serialization (JSON/CSV/XML)                          |
 | [src/twinflame/deobf.py](src/twinflame/deobf.py)         | Cross-version deobfuscation: recovered names → ProGuard mapping.txt   |
 | [src/twinflame/api.py](src/twinflame/api.py)             | Public `load / filter / diff` entry points                           |
 | [src/twinflame/cli.py](src/twinflame/cli.py)             | `twinflame` console script                                             |
@@ -247,7 +257,7 @@ Prints true/false positive & negative class-match counts plus precision/recall/F
 nix develop --command pytest tests/
 ```
 
-Currently: **86 tests passing**, 0 skipped. Redex is built and on PATH inside the dev shell.
+Currently: **265 tests** (2 need Redex on PATH and auto-skip without it — the dev shell provides it).
 
 Test fixtures are **pure-synthetic**: `tests/fixtures/synthetic.py` builds `Class` objects directly via Python, no binaries committed to git. The integration tests exercise the full diff pipeline (cluster → anchor → signature → accurate → api) on these objects.
 
