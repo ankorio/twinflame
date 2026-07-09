@@ -13,9 +13,12 @@ Inputs can be APKs, single `.dex` files, or directories of dumped `.dex` (memory
 
 ## Documentation
 
-- **[docs/using-twinflame.md](docs/using-twinflame.md)** — task-oriented guide: the three use cases, reading the change report, feeding the mapping to jadx/retrace.
-- **[docs/change-report-schema.md](docs/change-report-schema.md)** — the versioned JSON output format (for downstream tooling).
-- **[docs/how-it-works.md](docs/how-it-works.md)** — how the pipeline works internally, with diagrams.
+Full documentation lives in the **[project wiki](https://github.com/ankorio/twinflame/wiki)**:
+
+- **[Using Twinflame](https://github.com/ankorio/twinflame/wiki/Using-Twinflame)** — task-oriented guide: the three use cases, reading the change report, feeding the mapping to jadx/retrace.
+- **[Change Report Schema](https://github.com/ankorio/twinflame/wiki/Change-Report-Schema)** — the versioned JSON output format (for downstream tooling).
+- **[How It Works](https://github.com/ankorio/twinflame/wiki/How-It-Works)** — how the pipeline works internally, with diagrams.
+- **[Evaluation Corpus](https://github.com/ankorio/twinflame/wiki/Evaluation-Corpus)** / **[Accuracy Benchmarks](https://github.com/ankorio/twinflame/wiki/Accuracy-Benchmarks)** — the corpora the accuracy work is graded against and the P/R/F1 results. Wall-clock perf numbers stay in-repo: [BENCHMARKS.md](BENCHMARKS.md).
 
 ## Pipeline
 
@@ -31,18 +34,28 @@ Optional Redex pre-pass strips junk-instruction obfuscation (`LocalDcePass` + `R
 
 ### pip (recommended)
 
-Requires Python ≥ 3.11. Runtime deps (androguard, numpy, rapidfuzz) install automatically.
+twinflame is on [PyPI](https://pypi.org/project/twinflame/). Requires Python ≥ 3.11; runtime
+deps (androguard, numpy, rapidfuzz) install automatically.
 
 ```sh
-git clone https://github.com/ankorio/twinflame && cd twinflame
-python -m venv .venv && . .venv/bin/activate
-pip install .            # or: pip install -e '.[test]' for a dev checkout
-twinflame --help           # console entry point is installed
+pip install --pre twinflame    # --pre needed while the latest release is a beta
+twinflame --help                # console entry point is installed
 ```
+
+(`pipx install --pip-args=--pre twinflame` works too if you prefer an isolated CLI install.)
 
 That's everything for the core tool. Two features need external programs that aren't Python
 packages: `--normalize` needs **Redex** on `PATH` (optional; only for junk-instruction
 normalization), and applying a recovered `mapping.txt` needs your own decompiler (e.g. **JADX**).
+
+### Development checkout
+
+```sh
+git clone https://github.com/ankorio/twinflame && cd twinflame
+python -m venv .venv && . .venv/bin/activate
+pip install -e '.[test]'
+pytest tests/
+```
 
 ### Nix flake (reproducible environment)
 

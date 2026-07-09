@@ -115,6 +115,8 @@ python corpus/scripts/bench_prepare.py
 python corpus/scripts/bench_diff.py
 ```
 
-Corpus layout and the `mapping.txt`-oracle accuracy harness are documented in
-`eval/corpus/README.md`. Sample naming here keeps private/binary-only apps generic
+Corpus layout and the `mapping.txt`-oracle accuracy harness are documented in the wiki
+([Evaluation Corpus](https://github.com/ankorio/twinflame/wiki/Evaluation-Corpus),
+[Accuracy Benchmarks](https://github.com/ankorio/twinflame/wiki/Accuracy-Benchmarks)).
+Sample naming here keeps private/binary-only apps generic
 (the private banking app and the memory DEX dumps are not named); public apps are named as-is.
