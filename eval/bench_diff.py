@@ -1,4 +1,4 @@
-"""Diff-phase benchmark off the already-prepared records (records/*.tfr.json).
+"""Diff-phase benchmark off the already-prepared records (records/*.tfr).
 
 Runs each version pair under the *realistic* CLI config — clustering on,
 pool-level parallelism across all cores (cluster=True, jobs=nproc) — which is
@@ -41,8 +41,8 @@ def _run(key_a: str, key_b: str, jobs: int) -> dict:
     from twinflame import api
     from twinflame.prepare import load_record
     t0 = time.perf_counter()
-    la = load_record(REC / f"{key_a}.tfr.json").app.classes
-    lb = load_record(REC / f"{key_b}.tfr.json").app.classes
+    la = load_record(REC / f"{key_a}.tfr").app.classes
+    lb = load_record(REC / f"{key_b}.tfr").app.classes
     t_rec = time.perf_counter() - t0
     t1 = time.perf_counter()
     matches = api.diff(list(la), list(lb), 0.8,

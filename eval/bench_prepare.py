@@ -62,7 +62,7 @@ def prepare_one(name, path, group):
     t1 = time.perf_counter()
     rec = prepare_app(app, digest=digest_of(Path(path)), input_kind=kind)
     t_fp = time.perf_counter() - t1
-    out = REC / f"{key}.tfr.json"
+    out = REC / f"{key}.tfr"
     t2 = time.perf_counter()
     save(rec, out)
     t_save = time.perf_counter() - t2

@@ -12,7 +12,7 @@ from .model import (
     Pool,
     Signature,
 )
-from .prepare import PreparedRecord, load_record, prepare, save
+from .prepare import PreparedRecord, load_record, migrate_record, prepare, save
 
 __all__ = [
     "App",
@@ -29,6 +29,7 @@ __all__ = [
     "filter",
     "load",
     "load_record",
+    "migrate_record",
     "prepare",
     "save",
 ]
