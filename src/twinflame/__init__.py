@@ -33,4 +33,14 @@ __all__ = [
     "save",
 ]
 
-__version__ = "0.1.0b1"
+# Single source of truth is the [project].version in pyproject.toml; read it
+# back from the installed package metadata so the two never drift. Falls back
+# when running from an uninstalled source tree.
+from importlib.metadata import PackageNotFoundError, version as _pkg_version  # noqa: E402
+
+try:
+    __version__ = _pkg_version("twinflame")
+except PackageNotFoundError:  # source checkout without an install
+    __version__ = "0.0.0+unknown"
+
+del _pkg_version, PackageNotFoundError

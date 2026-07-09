@@ -1,0 +1,63 @@
+name: release
+
+# On every push to main (i.e. a merged PR): re-run the full test matrix, then
+# — only if [project].version in pyproject.toml is not already tagged — build,
+# publish to PyPI, and tag the release. Merges that don't bump the version are
+# a no-op release (the tag already exists), so nothing is re-published.
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # PyPI Trusted Publishing (OIDC) — no stored token
+      contents: write   # push the tag + create the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need existing tags to detect a version bump
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve version and check if it is new
+        id: ver
+        run: |
+          V=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$V" >/dev/null 2>&1; then
+            echo "new=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$V already tagged — nothing to release."
+          else
+            echo "new=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Releasing v$V"
+          fi
+
+      - name: Build sdist + wheel
+        if: steps.ver.outputs.new == 'true'
+        run: |
+          python -m pip install --upgrade build
+          python -m build
+
+      - name: Publish to PyPI
+        if: steps.ver.outputs.new == 'true'
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Tag + GitHub Release
+        if: steps.ver.outputs.new == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          TAG="v${{ steps.ver.outputs.version }}"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" dist/* --title "$TAG" --generate-notes
