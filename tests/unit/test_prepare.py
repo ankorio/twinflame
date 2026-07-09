@@ -68,7 +68,7 @@ def test_save_and_load_record(tmp_path):
 def test_load_record_rejects_stale_algo_version(tmp_path):
     rec = _record()
     d = record_to_dict(rec)
-    d["algo_version"] = "0000000000000000"  # simulate a params change
+    d["abstract_version"] = "0000000000000000"  # simulate an opcode-table change
     p = tmp_path / "stale.json"
     import json
 

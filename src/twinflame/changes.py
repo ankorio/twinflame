@@ -41,7 +41,7 @@ from .features import (
 from .model import Class, Match
 from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
-# Bump on any breaking change to the JSON shape (see docs/change-report-schema.md).
+# Bump on any breaking change to the JSON shape (see the Change-Report-Schema wiki page).
 # v2: added superclass / interfaces / components on paired rows (feedback #4).
 CHANGES_SCHEMA_VERSION = 2
 

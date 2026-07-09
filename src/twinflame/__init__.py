@@ -12,7 +12,12 @@ from .model import (
     Pool,
     Signature,
 )
-from .prepare import PreparedRecord, load_record, prepare, save
+from .prepare import PreparedRecord, load_record, migrate_record, prepare, save
+
+# WIP / experimental — Tier-1 containment kinship scoring. The self-containment
+# anchor is reliable; family-vs-benign thresholds are uncalibrated and depend on
+# the unbuilt library dictionary (M3.3). See plans/batch-scoring-design.md.
+from .score import ContainmentResult, containment
 
 __all__ = [
     "App",
@@ -22,13 +27,16 @@ __all__ = [
     "Match",
     "Method",
     "MethodMatch",
+    "ContainmentResult",
     "Pool",
     "PreparedRecord",
     "Signature",
+    "containment",
     "diff",
     "filter",
     "load",
     "load_record",
+    "migrate_record",
     "prepare",
     "save",
 ]

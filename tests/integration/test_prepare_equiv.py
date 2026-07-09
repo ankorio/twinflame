@@ -14,7 +14,13 @@ import synthetic
 
 from twinflame import api
 from twinflame.model import App
-from twinflame.prepare import prepare_app, record_from_dict, record_to_dict
+from twinflame.prepare import (
+    prepare_app,
+    record_from_bytes,
+    record_from_dict,
+    record_to_bytes,
+    record_to_dict,
+)
 
 
 def _summary(matches):
@@ -71,6 +77,17 @@ def test_diff_off_serialized_record_matches_fresh_parse():
 
     rec_l = record_from_dict(record_to_dict(_record(lhs, "l")))
     rec_r = record_from_dict(record_to_dict(_record(rhs, "r")))
+    prepared = api.diff(list(rec_l.classes), list(rec_r.classes), threshold=0.6)
+
+    assert _summary(prepared) == _summary(fresh)
+
+
+def test_diff_off_packed_record_matches_fresh_parse():
+    lhs, rhs = _build_pair()
+    fresh = api.diff(lhs, rhs, threshold=0.6)
+
+    rec_l = record_from_bytes(record_to_bytes(_record(lhs, "l")))
+    rec_r = record_from_bytes(record_to_bytes(_record(rhs, "r")))
     prepared = api.diff(list(rec_l.classes), list(rec_r.classes), threshold=0.6)
 
     assert _summary(prepared) == _summary(fresh)
