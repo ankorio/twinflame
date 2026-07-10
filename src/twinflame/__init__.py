@@ -16,7 +16,7 @@ from .prepare import PreparedRecord, load_record, migrate_record, prepare, save
 
 # WIP / experimental — Tier-1 containment kinship scoring. The self-containment
 # anchor is reliable; family-vs-benign thresholds are uncalibrated and depend on
-# the unbuilt library dictionary (M3.3). See plans/batch-scoring-design.md.
+# the unbuilt library dictionary (M3.3). See the batch-scoring design.
 from .score import ContainmentResult, containment
 
 __all__ = [

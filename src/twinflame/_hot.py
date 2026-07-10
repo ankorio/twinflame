@@ -36,6 +36,6 @@ def popcount_int(value: int) -> int:
 def levenshtein_bytes(a: bytes, b: bytes) -> int:
     # rapidfuzz's Levenshtein is a C++/SIMD bit-parallel (Myers') implementation,
     # measured at ~27-95x faster than a hand-rolled Rust/PyO3 port and ~860x over
-    # the plain-Python DP this replaced (see LEVENSHTEIN_BENCHMARK_REPORT.md at
-    # the repo root). Equal insert/delete/substitute costs match the old DP.
+    # the plain-Python DP this replaced (algorithm beat language — the Levenshtein
+    # benchmark). Equal insert/delete/substitute costs match the old DP.
     return _rf_levenshtein.distance(a, b)

@@ -73,3 +73,32 @@ def test_framework_calls_keeps_only_framework_targets():
     assert "Landroid/app/Activity;->onCreate(Landroid/os/Bundle;)V" in fc
     assert "Ljava/lang/String;->length()I" in fc
     assert all("Lcom/acme" not in ref for ref in fc)
+
+
+def _cls_super(desc, superclass, *, interfaces=(), strings=()):
+    methods = (synthetic.MethodSpec(name="m", bytecode=bytes([0x12, 0x0E]),
+                                    instr_count=2),)
+    return synthetic.make_class(synthetic.ClassSpec(
+        descriptor=desc, methods=methods, strings=strings,
+        superclass=superclass, interfaces=interfaces))
+
+
+def test_distinctive_framework_supertype_anchors_stringless_classes():
+    # Fillers give the corpus size that makes a rarely-used framework supertype
+    # distinctive by IDF. The pair below shares a framework superclass held by
+    # exactly one class per side and has NO strings — unreachable by the string
+    # anchor, surfaced by the hierarchy signal.
+    fillers_l = [_cls_super(f"La{i};", "Ljava/lang/Object;") for i in range(20)]
+    fillers_r = [_cls_super(f"Lx{i};", "Ljava/lang/Object;") for i in range(20)]
+    lhs = fillers_l + [_cls_super("Lp;", "Landroidx/room/RoomDatabase;")]
+    rhs = fillers_r + [_cls_super("Lq;", "Landroidx/room/RoomDatabase;")]
+    anchors = seed_anchors(lhs, rhs)
+    assert (20, 20) in {(li, ri) for li, ri, _ in anchors}
+
+
+def test_common_framework_supertype_does_not_anchor():
+    # A framework supertype shared by many classes each side is not distinctive
+    # (low IDF) and must not mint anchors.
+    lhs = [_cls_super(f"La{i};", "Landroidx/app/Activity;") for i in range(15)]
+    rhs = [_cls_super(f"Lx{i};", "Landroidx/app/Activity;") for i in range(15)]
+    assert seed_anchors(lhs, rhs) == []

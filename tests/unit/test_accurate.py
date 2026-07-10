@@ -10,6 +10,8 @@ from twinflame.accurate import (
     BYTECODE_WEIGHT,
     FEATURE_WEIGHT,
     HUNGARIAN_MAX_POOL_SIZE,
+    _hierarchy_tokens,
+    _structural_features,
     abstract_sequence,
     class_similarity,
     greedy_assign,
@@ -277,3 +279,46 @@ def test_select_assignment_auto_falls_back_to_greedy_on_large_pools():
 
 def test_greedy_assign_empty():
     assert greedy_assign({}) == {}
+
+
+# --- first-level hierarchy signal (M: LibPecker/apkdiff-style) ---------------
+
+def _cls(desc, *, superclass=None, interfaces=(), methods=()):
+    return synthetic.make_class(synthetic.ClassSpec(
+        descriptor=desc, superclass=superclass, interfaces=interfaces,
+        methods=methods))
+
+
+def test_hierarchy_tokens_keep_framework_drop_object_and_app():
+    c = _cls(
+        "LX;",
+        superclass="Landroidx/app/Activity;",
+        interfaces=("Ljava/io/Serializable;", "Lcom/app/Own;"),  # app iface dropped
+    )
+    toks = set(_hierarchy_tokens(c))
+    assert toks == {"S:Landroidx/app/Activity;", "I:Ljava/io/Serializable;"}
+
+    # Object-only superclass and app-only supertypes carry no signal
+    assert not _hierarchy_tokens(_cls("LY;", superclass="Ljava/lang/Object;"))
+    assert not _hierarchy_tokens(_cls("LZ;", superclass="Lcom/app/Base;"))
+
+
+def test_hierarchy_feature_omitted_when_no_framework_hierarchy():
+    a = _cls("LA;", superclass="Ljava/lang/Object;")
+    b = _cls("LB;", superclass="Lcom/other/Base;")  # app supertype → no token
+    feat = _structural_features(a, b)
+    assert "hierarchy" not in feat  # neither dilutes nor boosts structureless pairs
+
+
+def test_hierarchy_feature_discriminates_framework_supertype():
+    methods = (synthetic.MethodSpec(name="m", bytecode=bytes([0x6E, 0x0E]),
+                                    instr_count=2),)
+    same = _cls("LA;", superclass="Landroidx/app/Activity;", methods=methods)
+    other = _cls("LB;", superclass="Landroidx/app/Service;", methods=methods)
+
+    feat_same = _structural_features(same, same)
+    feat_diff = _structural_features(same, other)
+    assert feat_same["hierarchy"] == 1.0
+    assert feat_diff["hierarchy"] == 0.0
+    # the differing framework supertype lowers the blended class score
+    assert class_similarity(same, other)[0] < class_similarity(same, same)[0]

@@ -572,6 +572,9 @@ def record_from_bytes(data: bytes) -> PreparedRecord:
 
 def save(rec: PreparedRecord, path: str | Path) -> Path:
     p = Path(path)
+    # Create missing parent directories so a record path into a not-yet-existing
+    # folder writes cleanly instead of crashing.
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(record_to_bytes(rec))
     return p
 

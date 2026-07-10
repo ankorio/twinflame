@@ -181,10 +181,18 @@ def _default_output(apk1: Path, apk2: Path, ext: str) -> Path:
     return Path(f"{Path(apk1).stem}__vs__{Path(apk2).stem}.diff.{ext}")
 
 
+def _write_output(path: Path, text: str) -> None:
+    """Write an output file, creating any missing parent directories first so a
+    user-supplied path into a not-yet-existing folder doesn't crash."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
 def _main_prepare(argv: list[str]) -> int:
     """`twinflame prepare <sample>` — fingerprint one sample into a reusable,
     digest-keyed record (parse + signatures + abstract opcodes), so later
-    comparisons skip the expensive parse. See plans/batch-scoring-design.md."""
+    comparisons skip the expensive parse. See the batch-scoring design."""
     p = argparse.ArgumentParser(
         prog="twinflame prepare",
         description="Fingerprint an APK/.dex/dir into a reusable comparison record.",
@@ -221,7 +229,7 @@ def _main_score(argv: list[str]) -> int:
     """`twinflame score <family> <candidate>` — Tier-1 containment: how much of
     the family's code is structurally present in the candidate, as a scalar off
     prepared records (or APK/.dex, resolved like the diff path). See
-    plans/batch-scoring-design.md. This is the malware-triage primitive:
+    the batch-scoring design. This is the malware-triage primitive:
     confirm/score a flagged candidate against a known family seed.
 
     ⚠️ WORK IN PROGRESS / EXPERIMENTAL — the self-containment anchor is 1.0 and
@@ -231,7 +239,7 @@ def _main_score(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="twinflame score",
         description="[WIP/experimental] Containment score (family ⊆ candidate) off "
-                    "two samples. Uncalibrated — see plans/batch-scoring-design.md.",
+                    "two samples. Uncalibrated — see the batch-scoring design.",
     )
     p.add_argument("family", type=Path,
                    help="the known family/seed: a .tfr record, APK, .dex, or dir")
@@ -453,18 +461,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_file:
         render_name, ext = _FORMATS[args.format]
         out_path = args.output or _default_output(args.apk1, args.apk2, ext)
-        out_path.write_text(getattr(changes_mod, render_name)(change_list))
+        _write_output(out_path, getattr(changes_mod, render_name)(change_list))
         print(f"wrote: {out_path} ({args.format}, {len(change_list)} classes)", file=sys.stderr)
 
     if args.components_file:
-        args.components_file.write_text(changes_mod.render_components_text(change_list) + "\n")
+        _write_output(args.components_file,
+                      changes_mod.render_components_text(change_list) + "\n")
         print(f"wrote: {args.components_file} (components)", file=sys.stderr)
 
     if args.deobfuscation_map:
         from . import deobf
 
         entries = deobf.build_mapping(matches, min_confidence=args.map_min_confidence)
-        args.deobfuscation_map.write_text(deobf.render_mapping(entries))
+        _write_output(args.deobfuscation_map, deobf.render_mapping(entries))
         print(f"deobfuscation-map: {len(entries)} classes -> {args.deobfuscation_map}", file=sys.stderr)
     return 0
 

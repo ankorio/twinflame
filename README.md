@@ -266,7 +266,7 @@ The on-disk DEX/APK round-trip (loader.py end-to-end) currently has a smoke-only
 ## Known limitations
 
 - **Identical-structure classes collide.** Pools where many classes share signatures (trivial getter/setter classes, generated stubs) may produce false pairings via greedy assignment. `--min-instr 5` filters trivial classes; raising `--neighbors` widens the candidate pool.
-- **No inheritance context.** Matching is per-class (now with method-level detail *inside* a paired class), but ignores first-level parent/child signals (cf. LibPecker); these can be added later without disturbing the core.
+- **Limited inheritance context.** *Framework* first-level hierarchy (super/interfaces under `java/android/androidx/kotlin/*`) is now used three ways: folded into the SimHash, as a class-similarity feature, and as a rename-invariant anchor that reaches string-less classes (cf. LibPecker, csl-ugent/apkdiff). *App* supertypes — renamed per build — are still only exploited post-match by the type-graph propagation pass (`propagate.py`), not during initial matching.
 - **No cross-boundary / optimization resilience yet.** Matching assumes a 1:1 class and method correspondence. R8 *optimizations* that break that assumption — inlining, outlining, class merging — are a planned future track (see `twinflame-next-dev-plan.md`, M3.1), not yet implemented.
 - **JNI / native-code changes are invisible.** The diff is purely Dalvik-level — native library mutations require a complementary native-code diff.
 - **LSH is approximate by design.** `--buckets N` tunes the accuracy/speed knob.

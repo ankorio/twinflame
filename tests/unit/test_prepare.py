@@ -65,6 +65,15 @@ def test_save_and_load_record(tmp_path):
     assert [c.descriptor for c in loaded.classes] == [c.descriptor for c in rec.classes]
 
 
+def test_save_creates_missing_parent_dirs(tmp_path):
+    # Regression: a record path into a not-yet-existing folder must not crash.
+    rec = _record(digest="beadfeed")
+    dest = tmp_path / "does" / "not" / "exist" / "rec.tfr"
+    p = save(rec, dest)
+    assert p.exists()
+    assert load_record(p).digest == "beadfeed"
+
+
 def test_load_record_rejects_stale_algo_version(tmp_path):
     rec = _record()
     d = record_to_dict(rec)

@@ -8,12 +8,12 @@
     knobs (`radius`, `min_shared_calls`, a screen threshold) are uncalibrated —
     they need a real positive/negative family corpus. Treat every number below
     the 1.0 self-anchor as indicative, not final. See the Status section of
-    plans/batch-scoring-design.md.
+    the batch-scoring design.
 
 The matcher answers "which class here corresponds to which class there"; this
 answers "how much of family F's code is present in candidate C" as a single
 number, cheaply, off prepared records. It is the load-bearing primitive for the
-malware-triage flow in plans/batch-scoring-design.md: a prefilter (e.g. YARA)
+malware-triage flow in the batch-scoring design: a prefilter (e.g. YARA)
 flags a candidate as *possibly* family F, and twinflame confirms/scores it
 against a known family seed without diffing the whole corpus.
 
@@ -34,7 +34,7 @@ obfuscation-robust substrate.
 code would otherwise inflate containment across *unrelated* apps. Boilerplate
 (`is_boilerplate`) and known-library classes are dropped from the family class
 set before scoring. Until the library-signature dictionary lands (dev-plan M3.3
-/ plans/libscout-integration.md) the library filter is a package-prefix denylist
+/ the LibScout-integration decision) the library filter is a package-prefix denylist
 stopgap (`provenance.LIBRARY_PREFIXES`), which only catches un-renamed library
 code — good enough to validate the pipeline, not the final answer.
 """
@@ -56,7 +56,7 @@ from .signature import LSHIndex, compute_signature
 # 32-bit part. 12/128 is deliberately a touch generous (containment biases
 # toward *finding* family code; a false "present" is caught by Tier-2 evidence,
 # a false "absent" silently lowers the score). Tune against a positive/negative
-# corpus — see the Eval section of plans/batch-scoring-design.md.
+# corpus — see the Eval section of the batch-scoring design.
 DEFAULT_MATCH_RADIUS = 12
 
 # A family class carrying almost no structure is a near-universal shape (empty
@@ -74,7 +74,7 @@ MIN_FAMILY_INSTRUCTIONS = 2
 # one negative (contacts⊆telegram) pair, N=2 widened the family/unrelated gap
 # from +0.11 to +0.33 — promising but calibrated on a single pair, so it stays
 # OFF by default until a real positive/negative family corpus sets the threshold
-# (plans/batch-scoring-design.md, Eval). The real noise fix is M3.3 (a library
+# (the batch-scoring design, Eval). The real noise fix is M3.3 (a library
 # signature dictionary) removing shared-runtime classes at the source.
 MIN_SHARED_CALLS_DEFAULT = 0
 
