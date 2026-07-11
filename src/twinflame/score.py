@@ -33,10 +33,11 @@ obfuscation-robust substrate.
 **Noise exclusion is mandatory on the family side.** Shared AndroidX/Kotlin/Gson
 code would otherwise inflate containment across *unrelated* apps. Boilerplate
 (`is_boilerplate`) and known-library classes are dropped from the family class
-set before scoring. Until the library-signature dictionary lands (dev-plan M3.3
-/ the LibScout-integration decision) the library filter is a package-prefix denylist
-stopgap (`provenance.LIBRARY_PREFIXES`), which only catches un-renamed library
-code — good enough to validate the pipeline, not the final answer.
+set before scoring. The library filter is two-layered: the package-prefix
+denylist (`provenance.LIBRARY_PREFIXES`, catches un-renamed code) plus — when a
+catalogue pack is available (`--libsigs` / `libdict.py`) — the M3.3
+signature-dictionary exclusions via `library_descriptors`, which reach the
+renamed shared-runtime classes no prefix heuristic can see.
 """
 
 from __future__ import annotations
@@ -101,10 +102,15 @@ def family_classes(
     *,
     drop_library: bool = True,
     min_instructions: int = MIN_FAMILY_INSTRUCTIONS,
+    library_descriptors: Optional[frozenset[str]] = None,
 ) -> list[Class]:
     """The family's *scoreable* class set: real logic only. Drops boilerplate
     twins, tiny/near-empty shapes, and (by default) known-library code — the
-    noise that would otherwise inflate containment against unrelated apps."""
+    noise that would otherwise inflate containment against unrelated apps.
+    `library_descriptors` (from `libdict.label_classes` over the family) adds
+    the dictionary's evidence-based exclusions on top of the prefix stopgap —
+    this is the M3.3 fix: renamed shared-runtime classes leave the family set
+    even though no prefix heuristic can see them."""
     out: list[Class] = []
     for c in classes:
         if is_boilerplate(c):
@@ -112,6 +118,8 @@ def family_classes(
         if c.total_instructions < min_instructions:
             continue
         if drop_library and is_library(c):
+            continue
+        if library_descriptors and c.descriptor in library_descriptors:
             continue
         out.append(c)
     return out
@@ -166,6 +174,7 @@ def containment(
     radius: int = DEFAULT_MATCH_RADIUS,
     drop_library: bool = True,
     min_shared_calls: int = MIN_SHARED_CALLS_DEFAULT,
+    library_descriptors: Optional[frozenset[str]] = None,
 ) -> ContainmentResult:
     """Score `containment(family ⊆ candidate)` off two class lists (typically
     `record.app.classes` from prepared records). The family set is noise-
@@ -176,7 +185,8 @@ def containment(
     also sharing >= N framework calls — but only for family classes that *have*
     at least that many framework calls, so call-poor real logic still matches on
     signature alone (no recall loss). See `MIN_SHARED_CALLS_DEFAULT`."""
-    fam = family_classes(family, drop_library=drop_library)
+    fam = family_classes(family, drop_library=drop_library,
+                         library_descriptors=library_descriptors)
     index = build_index(candidate)
 
     weight_total = weight_present = 0
