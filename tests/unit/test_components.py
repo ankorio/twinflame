@@ -89,8 +89,8 @@ def test_csv_and_xml_serialize():
     changes = change_set([Match(_cls(descriptor="La;", superclass=_ACCESSIBILITY),
                                 _cls(descriptor="Lb;", superclass=_ACCESSIBILITY), 1.0)])
     csv_out = render_csv(changes)
-    assert csv_out.splitlines()[0].startswith("kind,origin,confidence")
+    assert csv_out.splitlines()[0].startswith("kind,origin,library,confidence")
     assert _ACCESSIBILITY in csv_out
     xml_out = render_xml(changes)
-    assert '<twinflame schema_version="2">' in xml_out
+    assert '<twinflame schema_version="3">' in xml_out
     assert "<lhs_super>" in xml_out

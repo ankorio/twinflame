@@ -43,7 +43,8 @@ from .provenance import ORIGIN_RANK, dev_descriptor_prefixes, origin_of
 
 # Bump on any breaking change to the JSON shape (see the Change-Report-Schema wiki page).
 # v2: added superclass / interfaces / components on paired rows (feedback #4).
-CHANGES_SCHEMA_VERSION = 2
+# v3: added `library` (dictionary-evidence label `<coord>@<version-range>`).
+CHANGES_SCHEMA_VERSION = 3
 
 # Review-worthiness ordering: real edits first, cosmetic/unchanged last.
 _KIND_RANK = {"modified": 0, "added": 1, "removed": 2, "cosmetic": 3, "unchanged": 4}
@@ -78,6 +79,10 @@ class ClassChange:
     # Sensitive-component short-codes implemented by this class on either side
     # (e.g. ("BAS",) for an AccessibilityService). See components.py.
     components: tuple[str, ...] = ()
+    # Dictionary-evidence provenance: `<coord>@<version-range>` when the class
+    # matched the known-library signature dictionary (libdict.py). Present even
+    # for renamed classes the prefix heuristics can't reach.
+    library: Optional[str] = None
 
     @property
     def summary(self) -> str:
@@ -123,36 +128,67 @@ def _components(*descriptors: Optional[str], component_map: Optional[dict[str, s
     return tuple(sorted(codes))
 
 
+def _library_evidence(
+    library_map: Optional[dict[str, str]], *descriptors: Optional[str]
+) -> Optional[str]:
+    """The dictionary label for the first descriptor that has one, or None."""
+    if not library_map:
+        return None
+    for d in descriptors:
+        if d and (label := library_map.get(d)):
+            return label
+    return None
+
+
+def _apply_library(origin: str, label: Optional[str]) -> str:
+    """Dictionary evidence demotes a class to `library` — unless the dev prefix
+    claimed it as `app` (the documented priority: an app deliberately vendoring
+    a library under its own package still reviews as app code)."""
+    return "library" if label and origin != "app" else origin
+
+
 def classify_match(
     m: Match,
     class_map: Optional[ClassMap] = None,
     dev_prefix: Union[str, tuple[str, ...], None] = None,
     component_map: Optional[dict[str, set[str]]] = None,
+    library_map: Optional[dict[str, str]] = None,
 ) -> ClassChange:
     """One `Match` -> one typed change verdict. `dev_prefix` (a descriptor prefix
     or tuple of them, from `provenance.dev_descriptor_prefixes`) enables
     app/library origin tagging. `component_map` (descriptor -> sensitive-component
-    codes, from `components.component_labels`) tags dangerous base classes."""
+    codes, from `components.component_labels`) tags dangerous base classes.
+    `library_map` (descriptor -> `<coord>@<range>`, from `libdict.label_classes`)
+    adds dictionary-evidence library labels that survive R8 renames."""
     if m.is_added:
+        lib = _library_evidence(library_map, m.rhs.descriptor)
         return ClassChange("added", None, m.rhs.descriptor, m.rhs.source_file,
-                           _size(m.rhs), 0.0, False, origin_of(m.rhs, dev_prefix), None,
+                           _size(m.rhs), 0.0, False,
+                           _apply_library(origin_of(m.rhs, dev_prefix), lib), None,
                            rhs_super=m.rhs.superclass, rhs_interfaces=m.rhs.interfaces,
-                           components=_components(m.rhs.descriptor, component_map=component_map))
+                           components=_components(m.rhs.descriptor, component_map=component_map),
+                           library=lib)
     if m.is_deleted:
+        lib = _library_evidence(library_map, m.lhs.descriptor)
         return ClassChange("removed", m.lhs.descriptor, None, m.lhs.source_file,
-                           _size(m.lhs), 0.0, False, origin_of(m.lhs, dev_prefix), None,
+                           _size(m.lhs), 0.0, False,
+                           _apply_library(origin_of(m.lhs, dev_prefix), lib), None,
                            lhs_super=m.lhs.superclass, lhs_interfaces=m.lhs.interfaces,
-                           components=_components(m.lhs.descriptor, component_map=component_map))
+                           components=_components(m.lhs.descriptor, component_map=component_map),
+                           library=lib)
 
     delta = class_change(m.lhs, m.rhs, class_map)
+    lib = _library_evidence(library_map, m.lhs.descriptor, m.rhs.descriptor)
     type_ctx = dict(
         lhs_super=m.lhs.superclass, rhs_super=m.rhs.superclass,
         lhs_interfaces=m.lhs.interfaces, rhs_interfaces=m.rhs.interfaces,
         components=_components(m.lhs.descriptor, m.rhs.descriptor, component_map=component_map),
+        library=lib,
     )
     anchored = m.breakdown.get("anchored") == 1.0
     src = m.lhs.source_file or m.rhs.source_file
-    origin = origin_of(m.lhs, dev_prefix)  # older side names the class we review
+    # Older side names the class we review; dictionary evidence beats prefixes.
+    origin = _apply_library(origin_of(m.lhs, dev_prefix), lib)
     method_deltas = localize_method_changes(m.method_matches)
     # A method added/removed is a real structural change even if it moved no
     # class-level semantic feature (e.g. a new method with no framework calls) —
@@ -183,17 +219,21 @@ def change_set(
     matches: Iterable[Match],
     dev_package: Union[str, _Iterable[str], None] = None,
     component_map: Optional[dict[str, set[str]]] = None,
+    library_map: Optional[dict[str, str]] = None,
 ) -> list[ClassChange]:
     """All verdicts, ranked most-review-worthy first: by kind (real edits first),
     then **origin** (the developer's own `app` code above `library` churn), then
     descending magnitude, then source file for determinism. `dev_package` — one
     prefix or several (multi-root apps), e.g. from `--app-package`/`--package` or
     the manifest — drives the app/library split; without it only known libraries
-    are demoted. `component_map` tags sensitive base classes (see components.py)."""
+    are demoted. `component_map` tags sensitive base classes (see components.py).
+    `library_map` (from `libdict.label_classes`) demotes dictionary-recognised
+    library classes even when R8 renamed them out of the prefix heuristics."""
     matches = list(matches)
     class_map = build_class_map(matches)
     dev_prefix = dev_descriptor_prefixes(dev_package)
-    changes = [classify_match(m, class_map, dev_prefix, component_map) for m in matches]
+    changes = [classify_match(m, class_map, dev_prefix, component_map, library_map)
+               for m in matches]
     changes.sort(key=lambda c: (_KIND_RANK.get(c.kind, 9),
                                 ORIGIN_RANK.get(c.origin, 1),
                                 0 if c.confidence == "high" else 1, -c.magnitude,
@@ -220,6 +260,7 @@ def render_json(changes: Iterable[ClassChange]) -> str:
             "match_distance": round(c.match_distance, 4),
             "anchored": c.anchored,
             "origin": c.origin,
+            "library": c.library,
             "confidence": c.confidence,
             "lhs_super": c.lhs_super,
             "rhs_super": c.rhs_super,
@@ -260,7 +301,7 @@ def render_json(changes: Iterable[ClassChange]) -> str:
 
 
 _CSV_COLUMNS = (
-    "kind", "origin", "confidence", "lhs", "rhs", "magnitude",
+    "kind", "origin", "library", "confidence", "lhs", "rhs", "magnitude",
     "match_distance", "anchored", "lhs_super", "rhs_super",
     "interfaces", "components", "summary",
 )
@@ -271,6 +312,7 @@ def _row_values(c: ClassChange) -> dict[str, str]:
     return {
         "kind": c.kind,
         "origin": c.origin,
+        "library": c.library or "",
         "confidence": c.confidence,
         "lhs": c.lhs or "",
         "rhs": c.rhs or "",

@@ -76,6 +76,12 @@ def _build_parser() -> argparse.ArgumentParser:
     scope.add_argument("--app-package", metavar="PREFIX", action="append", default=None,
                        help="package prefix(es) owned by the app, for provenance ranking only "
                             "(does NOT filter scope; repeatable for multi-root apps)")
+    scope.add_argument("--libsigs", metavar="PACK", default=None,
+                       help="known-library catalogue pack (.tflp) for evidence-based library "
+                            "labeling; defaults to $TWINFLAME_LIBSIGS or "
+                            "~/.cache/twinflame/libsigs.tflp when present")
+    scope.add_argument("--no-libsigs", action="store_true",
+                       help="disable library-dictionary labeling even if a pack is discoverable")
     scope.add_argument("--skip-inner", action="store_true", help="skip inner classes (name contains '$')")
     scope.add_argument("--skip-external", action="store_true", help="skip external/framework classes")
     scope.add_argument("--skip-synthetic", dest="skip_synthetic", action="store_true", default=True)
@@ -181,10 +187,18 @@ def _default_output(apk1: Path, apk2: Path, ext: str) -> Path:
     return Path(f"{Path(apk1).stem}__vs__{Path(apk2).stem}.diff.{ext}")
 
 
+def _write_output(path: Path, text: str) -> None:
+    """Write an output file, creating any missing parent directories first so a
+    user-supplied path into a not-yet-existing folder doesn't crash."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
 def _main_prepare(argv: list[str]) -> int:
     """`twinflame prepare <sample>` — fingerprint one sample into a reusable,
     digest-keyed record (parse + signatures + abstract opcodes), so later
-    comparisons skip the expensive parse. See plans/batch-scoring-design.md."""
+    comparisons skip the expensive parse. See the batch-scoring design."""
     p = argparse.ArgumentParser(
         prog="twinflame prepare",
         description="Fingerprint an APK/.dex/dir into a reusable comparison record.",
@@ -221,7 +235,7 @@ def _main_score(argv: list[str]) -> int:
     """`twinflame score <family> <candidate>` — Tier-1 containment: how much of
     the family's code is structurally present in the candidate, as a scalar off
     prepared records (or APK/.dex, resolved like the diff path). See
-    plans/batch-scoring-design.md. This is the malware-triage primitive:
+    the batch-scoring design. This is the malware-triage primitive:
     confirm/score a flagged candidate against a known family seed.
 
     ⚠️ WORK IN PROGRESS / EXPERIMENTAL — the self-containment anchor is 1.0 and
@@ -231,7 +245,7 @@ def _main_score(argv: list[str]) -> int:
     p = argparse.ArgumentParser(
         prog="twinflame score",
         description="[WIP/experimental] Containment score (family ⊆ candidate) off "
-                    "two samples. Uncalibrated — see plans/batch-scoring-design.md.",
+                    "two samples. Uncalibrated — see the batch-scoring design.",
     )
     p.add_argument("family", type=Path,
                    help="the known family/seed: a .tfr record, APK, .dex, or dir")
@@ -247,6 +261,12 @@ def _main_score(argv: list[str]) -> int:
     p.add_argument("--min-shared-calls", type=int, default=0, metavar="N",
                    help="require a matched candidate class to share >= N framework calls "
                         "with the family class (precision gate; 0 = off, signature only)")
+    p.add_argument("--libsigs", metavar="PACK", default=None,
+                   help="known-library catalogue pack (.tflp): exclude dictionary-"
+                        "recognised classes from the family side (defaults to "
+                        "$TWINFLAME_LIBSIGS or ~/.cache/twinflame/libsigs.tflp)")
+    p.add_argument("--no-libsigs", action="store_true",
+                   help="disable the library-dictionary exclusion even if a pack is discoverable")
     p.add_argument("--evidence", type=int, metavar="N", default=0,
                    help="also print the N closest shared class pairs")
     p.add_argument("--json", action="store_true", help="emit the result as JSON")
@@ -258,8 +278,9 @@ def _main_score(argv: list[str]) -> int:
     from .loader import LoadError
 
     print("warning: `score` is experimental/WIP — the self-containment anchor is "
-          "reliable, but family-vs-benign thresholds are uncalibrated and depend on "
-          "the not-yet-built library dictionary (M3.3). Treat results as indicative.",
+          "reliable, but family-vs-benign thresholds are uncalibrated (needs a "
+          "labeled family corpus). Use --libsigs to exclude known-library noise. "
+          "Treat results as indicative.",
           file=sys.stderr)
 
     radius = args.radius if args.radius is not None else DEFAULT_MATCH_RADIUS
@@ -270,10 +291,28 @@ def _main_score(argv: list[str]) -> int:
     except LoadError as e:
         raise SystemExit(f"error: {e}")
 
+    # Dictionary-based family-side exclusion (the M3.3 noise fix).
+    library_descriptors = None
+    if args.libsigs and not Path(args.libsigs).is_file():
+        raise SystemExit(f"error: --libsigs pack not found: {args.libsigs}")
+    if not args.no_libsigs and args.drop_library:
+        from . import libdict
+
+        pack = libdict.find_pack(args.libsigs)
+        if pack is not None:
+            detector = libdict.load_detector(
+                pack, log=lambda m: print(m, file=sys.stderr))
+            if detector is not None:
+                labels = libdict.label_classes(fam_app.classes, detector)
+                library_descriptors = frozenset(labels)
+                print(f"libsigs: excluding {libdict.summarize(labels)} "
+                      f"from the family side ({pack})", file=sys.stderr)
+
     result = score_mod.containment(
         list(fam_app.classes), list(cand_app.classes),
         radius=radius, drop_library=args.drop_library,
         min_shared_calls=args.min_shared_calls,
+        library_descriptors=library_descriptors,
     )
 
     if args.json:
@@ -435,7 +474,29 @@ def main(argv: list[str] | None = None) -> int:
     if label_packages:
         print(f"provenance packages: {label_packages}", file=sys.stderr)
 
-    change_list = changes_mod.change_set(matches, dev_package=label_packages, component_map=component_map)
+    # Library-dictionary labeling (optional; evidence-based `library` origins).
+    library_map = None
+    if args.libsigs and not Path(args.libsigs).is_file():
+        print(f"error: --libsigs pack not found: {args.libsigs}", file=sys.stderr)
+        return 2
+    if not args.no_libsigs:
+        from . import libdict
+
+        pack = libdict.find_pack(args.libsigs)
+        if pack is not None:
+            t_lib_start = time.perf_counter()
+            detector = libdict.load_detector(
+                pack, log=lambda m: print(m, file=sys.stderr))
+            if detector is not None:
+                library_map = libdict.label_classes(
+                    list(lhs_classes) + list(rhs_classes), detector)
+                print(f"libsigs: {libdict.summarize(library_map)} "
+                      f"({time.perf_counter() - t_lib_start:.2f}s, {pack})",
+                      file=sys.stderr)
+
+    change_list = changes_mod.change_set(matches, dev_package=label_packages,
+                                         component_map=component_map,
+                                         library_map=library_map)
     if args.min_confidence != "low":
         change_list = changes_mod.filter_min_confidence(change_list, args.min_confidence)
     if args.klass:
@@ -453,18 +514,19 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_file:
         render_name, ext = _FORMATS[args.format]
         out_path = args.output or _default_output(args.apk1, args.apk2, ext)
-        out_path.write_text(getattr(changes_mod, render_name)(change_list))
+        _write_output(out_path, getattr(changes_mod, render_name)(change_list))
         print(f"wrote: {out_path} ({args.format}, {len(change_list)} classes)", file=sys.stderr)
 
     if args.components_file:
-        args.components_file.write_text(changes_mod.render_components_text(change_list) + "\n")
+        _write_output(args.components_file,
+                      changes_mod.render_components_text(change_list) + "\n")
         print(f"wrote: {args.components_file} (components)", file=sys.stderr)
 
     if args.deobfuscation_map:
         from . import deobf
 
         entries = deobf.build_mapping(matches, min_confidence=args.map_min_confidence)
-        args.deobfuscation_map.write_text(deobf.render_mapping(entries))
+        _write_output(args.deobfuscation_map, deobf.render_mapping(entries))
         print(f"deobfuscation-map: {len(entries)} classes -> {args.deobfuscation_map}", file=sys.stderr)
     return 0
 

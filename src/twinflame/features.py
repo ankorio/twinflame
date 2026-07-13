@@ -14,7 +14,7 @@ whose *change between a matched pair* actually indicates behaviour change:
   release-vs-release both sides are optimised alike, so this is comparable).
 - **string constants** — content survives renaming; a changed/added/removed
   string is a real edit (caveat: StringFog encryption defeats this — see
-  plans/obfuscation-resilience-notes.md; a future flag drops this feature then).
+  the obfuscation-resilience notes; a future flag drops this feature then).
 - **framework type references** — superclass, interfaces, field types, and method
   prototype types that are framework-owned (thus name-stable).
 

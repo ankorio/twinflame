@@ -3,8 +3,13 @@ from __future__ import annotations
 from collections import Counter
 
 from ._hot import levenshtein_bytes
+from .anchor import FRAMEWORK_PREFIXES
 from .model import AccessFlag, Class, Method, MethodMatch
 from .opcodes import method_categories
+
+# The near-universal default superclass — carries no discriminative signal, so
+# it is excluded from the hierarchy feature (almost every class extends it).
+_OBJECT_DESC = "Ljava/lang/Object;"
 
 
 BYTECODE_WEIGHT = 0.6
@@ -55,6 +60,45 @@ def _method_protos(c: Class) -> Counter:
     return Counter((m.return_type, m.arg_count) for m in c.methods)
 
 
+def _hierarchy_tokens(c: Class) -> Counter:
+    """Rename-invariant first-level type-graph tokens: the superclass and
+    interfaces that are *framework* types (java/android/androidx/kotlin/...),
+    which R8 cannot rename. `Object` is excluded (universal default, no signal),
+    and *app* supertypes are excluded because they are renamed per build and so
+    carry no correspondence at match time — recovering those is propagate.py's
+    post-match job, not a similarity feature's.
+    """
+    toks: list[str] = []
+    sc = c.superclass
+    if sc and sc != _OBJECT_DESC and sc.startswith(FRAMEWORK_PREFIXES):
+        toks.append("S:" + sc)
+    for iface in c.interfaces:
+        if iface.startswith(FRAMEWORK_PREFIXES):
+            toks.append("I:" + iface)
+    return Counter(toks)
+
+
+def _structural_features(a: Class, b: Class) -> dict[str, float]:
+    """Name-free structural similarity features shared by the blob and
+    method-level class scorers, so both stay consistent."""
+    feat = {
+        "nmethods": _ratio(len(a.methods), len(b.methods)),
+        "nfields": _ratio(len(a.fields), len(b.fields)),
+        "access": _jaccard_multiset(_access_flags(a), _access_flags(b)),
+        "field_types": _jaccard_multiset(_field_types(a), _field_types(b)),
+        "method_protos": _jaccard_multiset(_method_protos(a), _method_protos(b)),
+    }
+    # First-level hierarchy signal (cf. LibPecker, csl-ugent/apkdiff — closes the
+    # documented "no inheritance context" gap). Included only when at least one
+    # side has a discriminative framework supertype/interface; Object-only or
+    # app-only hierarchies add nothing and are omitted so they neither dilute the
+    # average nor falsely boost two unrelated structureless classes.
+    ha, hb = _hierarchy_tokens(a), _hierarchy_tokens(b)
+    if ha or hb:
+        feat["hierarchy"] = _jaccard_multiset(ha, hb)
+    return feat
+
+
 def class_similarity(a: Class, b: Class) -> tuple[float, dict[str, float]]:
     seq_a = abstract_sequence(a)
     seq_b = abstract_sequence(b)
@@ -64,13 +108,7 @@ def class_similarity(a: Class, b: Class) -> tuple[float, dict[str, float]]:
         dist = levenshtein_bytes(seq_a, seq_b)
         bytecode_sim = 1.0 - dist / max(len(seq_a), len(seq_b), 1)
 
-    feat = {
-        "nmethods": _ratio(len(a.methods), len(b.methods)),
-        "nfields": _ratio(len(a.fields), len(b.fields)),
-        "access": _jaccard_multiset(_access_flags(a), _access_flags(b)),
-        "field_types": _jaccard_multiset(_field_types(a), _field_types(b)),
-        "method_protos": _jaccard_multiset(_method_protos(a), _method_protos(b)),
-    }
+    feat = _structural_features(a, b)
     feature_avg = sum(feat.values()) / len(feat)
     overall = BYTECODE_WEIGHT * bytecode_sim + FEATURE_WEIGHT * feature_avg
     breakdown = {**feat, "bytecode": bytecode_sim, "overall": overall}
@@ -199,13 +237,7 @@ def compare_classes(
     method_matches = match_methods(a.methods, b.methods, assignment=assignment)
     method_agg = _method_rollup(method_matches)
 
-    feat = {
-        "nmethods": _ratio(len(a.methods), len(b.methods)),
-        "nfields": _ratio(len(a.fields), len(b.fields)),
-        "access": _jaccard_multiset(_access_flags(a), _access_flags(b)),
-        "field_types": _jaccard_multiset(_field_types(a), _field_types(b)),
-        "method_protos": _jaccard_multiset(_method_protos(a), _method_protos(b)),
-    }
+    feat = _structural_features(a, b)
     feature_avg = sum(feat.values()) / len(feat)
     overall = BYTECODE_WEIGHT * method_agg + FEATURE_WEIGHT * feature_avg
 

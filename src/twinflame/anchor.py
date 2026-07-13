@@ -36,12 +36,36 @@ MIN_STRING_LEN = 4
 # small: framework calls disambiguate string-derived candidates, they don't
 # mint anchors on their own.
 FRAMEWORK_WEIGHT = 0.25
+# Weight of a shared framework supertype/interface as anchor evidence, relative
+# to a string. Full weight: a framework supertype survives R8 verbatim (cf.
+# LibPecker/apkdiff) and reaches string-less classes the string anchor can't.
+# Commonness is already handled by IDF — a supertype shared by many classes has
+# low idf and cannot anchor — so a *discount* here only suppresses the useful
+# case (a framework type shared by exactly one class on each side, the strongest
+# hierarchy signal). Measured across the OSS corpus at 1.0: net +recall, no
+# precision loss; a 0.5 discount was fully inert (couldn't clear the threshold).
+HIERARCHY_WEIGHT = 1.0
+# The near-universal default superclass — no signal, excluded from hierarchy tokens.
+_OBJECT_DESC = "Ljava/lang/Object;"
 # Minimum combined confidence to accept a pair as an anchor.
 DEFAULT_MIN_CONFIDENCE = 0.5
 
 
 def useful_strings(c: Class) -> set[str]:
     return {s for s in c.strings if len(s) >= MIN_STRING_LEN and not s.isdigit()}
+
+
+def hierarchy_tokens(c: Class) -> set[str]:
+    """Rename-invariant framework supertype/interface tokens (Object excluded).
+    App supertypes are renamed per build and so carry no cross-build signal."""
+    toks: set[str] = set()
+    sc = c.superclass
+    if sc and sc != _OBJECT_DESC and sc.startswith(FRAMEWORK_PREFIXES):
+        toks.add("S:" + sc)
+    for iface in c.interfaces:
+        if iface.startswith(FRAMEWORK_PREFIXES):
+            toks.add("I:" + iface)
+    return toks
 
 
 def framework_calls(c: Class) -> Counter:
@@ -79,37 +103,46 @@ def seed_anchors(
     if not lhs or not rhs:
         return []
 
-    lhs_strings = [useful_strings(c) for c in lhs]
-    rhs_strings = [useful_strings(c) for c in rhs]
+    # Token space = useful strings (weight 1.0) ∪ framework hierarchy tokens
+    # (weight HIERARCHY_WEIGHT). Hierarchy tokens are namespaced with a leading
+    # NUL so they can never collide with a real app string.
+    def tokens(c: Class) -> dict[str, float]:
+        toks: dict[str, float] = {s: 1.0 for s in useful_strings(c)}
+        for h in hierarchy_tokens(c):
+            toks["\x00" + h] = HIERARCHY_WEIGHT
+        return toks
+
+    lhs_tokens = [tokens(c) for c in lhs]
+    rhs_tokens = [tokens(c) for c in rhs]
 
     n = len(lhs) + len(rhs)
     df: Counter = Counter()
-    for ss in lhs_strings:
-        df.update(ss)
-    for ss in rhs_strings:
-        df.update(ss)
+    for ts in lhs_tokens:
+        df.update(ts.keys())
+    for ts in rhs_tokens:
+        df.update(ts.keys())
     lhs_df: Counter = Counter()
-    for ss in lhs_strings:
-        lhs_df.update(ss)
+    for ts in lhs_tokens:
+        lhs_df.update(ts.keys())
 
-    rhs_by_str: dict[str, list[int]] = defaultdict(list)
-    for j, ss in enumerate(rhs_strings):
-        for s in ss:
-            rhs_by_str[s].append(j)
+    rhs_by_tok: dict[str, list[int]] = defaultdict(list)
+    for j, ts in enumerate(rhs_tokens):
+        for s in ts:
+            rhs_by_tok[s].append(j)
 
     # idf of a token seen exactly once == log(n+1); use it to normalize so a
     # single unique shared string yields evidence 1.0.
     norm = math.log(n + 1) or 1.0
 
     evidence: dict[tuple[int, int], float] = defaultdict(float)
-    for li, ss in enumerate(lhs_strings):
-        for s in ss:
-            ris = rhs_by_str.get(s)
+    for li, ts in enumerate(lhs_tokens):
+        for s, weight in ts.items():
+            ris = rhs_by_tok.get(s)
             if not ris:
                 continue
             tok_idf = math.log((n + 1) / df[s])
             split = lhs_df[s] * len(ris)  # ambiguity penalty
-            w = (tok_idf / norm) / split
+            w = weight * (tok_idf / norm) / split
             for ri in ris:
                 evidence[(li, ri)] += w
 
