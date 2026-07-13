@@ -1,0 +1,14 @@
+# Rust / maturin build output — never committed.
+/target/
+**/*.rs.bk
+*.pdb
+.maturin/
+
+# Compiled Python extension modules + built wheels (produced into a venv/wheel).
+*.so
+*.pyd
+*.dylib
+*.whl
+
+# Cargo.lock IS tracked (this crate is a deployable Python extension, not a
+# library published to crates.io) — so it is deliberately NOT ignored here.

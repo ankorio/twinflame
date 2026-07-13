@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import math
 import random
 from typing import Iterable
@@ -9,10 +8,22 @@ from .anchor import FRAMEWORK_PREFIXES
 from .model import AccessFlag, Class, Signature
 from .opcodes import method_categories
 
+try:
+    import twinflame_rs as _native  # native SimHash accelerator (optional wheel)
+except ImportError:  # pragma: no cover - pure-Python fallback is used below
+    _native = None
+
 PARTIAL_BITS = 32
 SIGNATURE_BITS = 128
 N_PERMUTATIONS_DEFAULT = 16
 BUCKET_PREFIX_BITS_DEFAULT = 16
+# Token mixer identity, folded into SIGNATURE_STAMP so a change invalidates
+# stale records/packs. MurmurHash3 x86_32 replaced blake2b (2026-07-13): a fast
+# non-cryptographic hash whose strong finalizer keeps SimHash drift on par with
+# blake2b (measured; FNV-1a widened the radius tail ~2 bits and was dropped). The
+# pure-Python `_hash_token` below and `twinflame_rs::hash_token` MUST stay
+# bit-identical.
+HASH_ALGO = "murmur3_x86_32"
 # Multi-probe LSH (research note §2): a true near-neighbor can differ from the
 # query in a few bits that land in the bucket prefix after permutation, flipping
 # the prefix and landing it in an *adjacent* bucket. Probing prefixes within a
@@ -43,9 +54,53 @@ IFACE_WEIGHT = 3.0
 CALL_WEIGHT_MULT = 3.0
 
 
+_MURMUR_C1 = 0xCC9E2D51
+_MURMUR_C2 = 0x1B873593
+_HASH_CACHE: dict[str, int] = {}
+
+
+def _murmur3_32(data: bytes) -> int:
+    """MurmurHash3 x86_32, seed 0. Bit-identical to `twinflame_rs::hash_token`."""
+    h = 0
+    n = len(data)
+    nblocks = n // 4
+    for i in range(nblocks):
+        k = int.from_bytes(data[i * 4:i * 4 + 4], "little")
+        k = (k * _MURMUR_C1) & 0xFFFFFFFF
+        k = ((k << 15) | (k >> 17)) & 0xFFFFFFFF
+        k = (k * _MURMUR_C2) & 0xFFFFFFFF
+        h ^= k
+        h = ((h << 13) | (h >> 19)) & 0xFFFFFFFF
+        h = (h * 5 + 0xE6546B64) & 0xFFFFFFFF
+    tail = data[nblocks * 4:]
+    k = 0
+    if len(tail) >= 3:
+        k ^= tail[2] << 16
+    if len(tail) >= 2:
+        k ^= tail[1] << 8
+    if len(tail) >= 1:
+        k ^= tail[0]
+        k = (k * _MURMUR_C1) & 0xFFFFFFFF
+        k = ((k << 15) | (k >> 17)) & 0xFFFFFFFF
+        k = (k * _MURMUR_C2) & 0xFFFFFFFF
+        h ^= k
+    h ^= n
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & 0xFFFFFFFF
+    h ^= h >> 16
+    return h
+
+
 def _hash_token(token: str) -> int:
-    h = hashlib.blake2b(token.encode("utf-8"), digest_size=4).digest()
-    return int.from_bytes(h, "big")
+    """Murmur3-x86_32 mixer over the token's UTF-8 bytes. Memoized — tokens
+    repeat 60-150x across an app (measured), so distinct-token hashing is a
+    fraction of the work. Must stay bit-identical to `twinflame_rs::hash_token`."""
+    v = _HASH_CACHE.get(token)
+    if v is None:
+        v = _HASH_CACHE[token] = _murmur3_32(token.encode("utf-8"))
+    return v
 
 
 def _simhash(features: Iterable[tuple[str, float]]) -> int:
@@ -128,11 +183,20 @@ def compute_signature(c: Class) -> Signature:
     # diff off a record is bit-identical to a diff off a fresh parse.
     if c.signature is not None:
         return c.signature
+    cls_f = _class_features(c)
+    fld_f = _field_features(c)
+    mth_f = _method_features(c)
+    code_f = _code_features(c)
+    if _native is not None:
+        # Native does hash + 32-bit accumulation (the ~91% hot path) with the
+        # GIL released; result is bit-identical to the pure-Python branch.
+        cls, fld, mth, code = _native.class_signature(cls_f, fld_f, mth_f, code_f)
+        return Signature(cls=cls, fld=fld, mth=mth, code=code)
     return Signature(
-        cls=_simhash(_class_features(c)),
-        fld=_simhash(_field_features(c)),
-        mth=_simhash(_method_features(c)),
-        code=_simhash(_code_features(c)),
+        cls=_simhash(cls_f),
+        fld=_simhash(fld_f),
+        mth=_simhash(mth_f),
+        code=_simhash(code_f),
     )
 
 
