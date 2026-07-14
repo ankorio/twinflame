@@ -6,7 +6,7 @@ Use cases:
 
 - **Vulnerability patch identification** — find the class a vendor changed to fix a flaw.
 - **Repackaging / mod analysis** — find injected code that replaces vendor logic with no-ops or hostile callbacks.
-- **Malware triage / kinship** — find shared code across samples and flag when both implement the same permission-gated component (AccessibilityService, NotificationListener, DeviceAdmin). `twinflame score` (experimental) condenses this to a single containment number — how much of a known family's code is present in a candidate — cheap enough to confirm a prefilter hit without diffing the whole corpus.
+- **Malware triage / kinship** — find shared code across samples and flag when both implement the same permission-gated component (AccessibilityService, NotificationListener, DeviceAdmin). `twinflame family build` distills several samples of one family into a persistent signature of their shared class structure; `twinflame family match` then scores an unknown sample (or a memory dump) against it — cheap enough to gate a prefilter hit without diffing the whole corpus. (`twinflame score` is the older, two-sample-only containment primitive.) Both are experimental/uncalibrated — see `family --help`.
 - **Deobfuscation correlation** — pair classes across Proguard-renamed builds.
 
 Inputs can be APKs, single `.dex` files, or directories of dumped `.dex` (memory dumps included). For pipelines that compare a sample against many, `twinflame prepare` fingerprints a sample once into a packed binary record (`.tfr`, ~20× smaller than JSON) that any diff accepts in place of the APK — record-vs-record compares run about 2× faster end-to-end. `twinflame migrate` upgrades a prepared corpus in place across releases where the stale layer is recomputable, so a large record DB doesn't have to be rebuilt from the original samples.
@@ -47,6 +47,21 @@ twinflame --help                # console entry point is installed
 That's everything for the core tool. Two features need external programs that aren't Python
 packages: `--normalize` needs **Redex** on `PATH` (optional; only for junk-instruction
 normalization), and applying a recovered `mapping.txt` needs your own decompiler (e.g. **JADX**).
+
+### Optional: native SimHash accelerator (build it yourself)
+
+The PyPI wheel is pure Python and works on its own. For ~8× faster fingerprinting (`prepare`,
+`family build`, libsigs labeling), build the optional Rust accelerator from the repo — it is
+**not** shipped as a prebuilt binary; you compile it locally:
+
+```sh
+git clone https://github.com/ankorio/twinflame && cd twinflame/native
+pip install maturin
+maturin develop --release        # builds and installs the `twinflame_rs` module
+```
+
+`signature.py` imports it automatically when present and falls back to the pure-Python path
+(bit-identical output) when it isn't, so it is a performance option, never a requirement.
 
 ### Development checkout
 
@@ -212,6 +227,16 @@ jadx --mappings-path app-new.map -Prename-mappings.format=PROGUARD_FILE -Prename
 - **Modded / repackaged app.** Drop `--package` (mods often live in bundled SDKs, not the vendor package). If you see a sea of ~0.95 "everything changed" matches, run with `--normalize` — that's the signature of junk-instruction obfuscation.
 - **Heavily Proguard'd inputs.** Add `--find-obfuscated` so single-letter package names (`a.b.c`) collapse into a fallback pool rather than failing to pair with their clear-text counterparts.
 - **Deobfuscating a stripped build.** Diff it against an older build that kept `SourceFile`, add `--find-obfuscated --deobfuscation-map out.map`, then load `out.map` in JADX.
+- **Malware family signature.** Distill several known samples of one family into a reusable pack, then score unknowns (APKs, `.dex`, or memory-dump directories) against it. Unpack packed samples first — a packer hides the payload from structural matching.
+
+  ```sh
+  # build a family signature from N samples (records, APKs, .dex, or dumps)
+  twinflame family build -o fam.tflp --name evilbot sample1/ sample2/ sample3/
+  # score an unknown dump against it (match radius defaults to the pack's build radius)
+  twinflame family match fam.tflp suspect_dump/
+  # or triage against a whole directory of family packs, ranked
+  twinflame family match packs/ suspect_dump/
+  ```
 
 ### Evaluation harness (`eval/`, plan M3.2)
 

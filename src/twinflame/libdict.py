@@ -49,8 +49,8 @@ def find_pack(explicit: Optional[str] = None) -> Optional[Path]:
 
 def load_detector(pack: Path, *, radius: int = DEFAULT_RADIUS, log=None):
     """A ready `LibraryDetector` for `pack`, or None (with a `log` note) when
-    twinflame_libsigs isn't installed or the pack predates the current
-    signature algorithm."""
+    twinflame_libsigs isn't installed, the pack predates the current
+    signature algorithm, or the pack files are unreadable/inconsistent."""
     try:
         from twinflame_libsigs.detect import LibraryDetector
         from twinflame_libsigs.store import StaleStoreError
@@ -64,7 +64,10 @@ def load_detector(pack: Path, *, radius: int = DEFAULT_RADIUS, log=None):
     try:
         return LibraryDetector.from_pack(pack, radius=radius,
                                          expect_stamp=SIGNATURE_STAMP)
-    except StaleStoreError as e:
+    except (StaleStoreError, ValueError) as e:
+        # ValueError covers a corrupt pack or a pack/sidecar pair from
+        # different builds — labeling is optional, so skip it, never fail
+        # the run over it.
         if log:
             log(f"libsigs: {e}; skipping library labeling")
         return None

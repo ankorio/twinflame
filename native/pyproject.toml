@@ -1,0 +1,15 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "twinflame-native"
+version = "0.1.0"
+description = "Native SimHash signature accelerator for twinflame"
+requires-python = ">=3.11"
+classifiers = ["Programming Language :: Rust"]
+
+[tool.maturin]
+features = ["python"]
+# The compiled module is `twinflame_rs` (matches the #[pymodule] fn name).
+module-name = "twinflame_rs"

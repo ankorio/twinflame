@@ -35,6 +35,12 @@ def _build_parser() -> argparse.ArgumentParser:
             "  twinflame migrate <paths>    refresh stale/legacy records in place\n"
             "                               (no re-parse) where possible; see\n"
             "                               migrate --help\n"
+            "  twinflame family build ...   distill N samples of one malware family\n"
+            "                               into a persistent signature pack (their\n"
+            "                               shared class structure); family build --help\n"
+            "  twinflame family match ...   containment of a family pack in an unknown\n"
+            "                               sample, or rank a directory of packs;\n"
+            "                               family match --help\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -407,6 +413,273 @@ def _main_migrate(argv: list[str]) -> int:
     return 1 if n_failed else 0
 
 
+def _main_family(argv: list[str]) -> int:
+    """`twinflame family build|match` — persistent malware-family signatures:
+    distill the shared class structure of N samples into a `.tflp` pack, then
+    score unknown samples against it. Requires the twinflame_libsigs package."""
+    if argv and argv[0] == "build":
+        return _main_family_build(argv[1:])
+    if argv and argv[0] == "match":
+        return _main_family_match(argv[1:])
+    print("usage: twinflame family build -o PACK SAMPLE... | "
+          "twinflame family match PACK_OR_DIR CANDIDATE\n"
+          "see `twinflame family build --help` / `twinflame family match --help`",
+          file=sys.stderr)
+    return 2
+
+
+def _main_family_build(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="twinflame family build",
+        description="Distill N samples of one malware family into a persistent "
+                    "signature pack: their shared class structure (k-of-N, "
+                    "Hamming-radius clustered), known libraries excluded.",
+    )
+    from .family import DEFAULT_BUILD_RADIUS, DEFAULT_MIN_INSTRUCTIONS
+
+    p.add_argument("samples", type=Path, nargs="+", metavar="SAMPLE",
+                   help="family samples (>= 2): .tfr records, APKs, .dex files, "
+                        "or dex directories, in any mix")
+    p.add_argument("-o", "--output", type=Path, required=True, metavar="PACK",
+                   help="family pack to write (.tflp; sidecar written next to it)")
+    p.add_argument("--name", default=None,
+                   help="family name stored in the pack (default: output stem)")
+    p.add_argument("-k", type=int, default=None, metavar="K",
+                   help="keep classes present in >= K of the N samples (default: N)")
+    p.add_argument("--radius", type=int, default=DEFAULT_BUILD_RADIUS,
+                   help="build clustering Hamming radius for 'same class across "
+                        f"samples' (default {DEFAULT_BUILD_RADIUS}; keep conservative "
+                        "— single-linkage chains amplify it)")
+    p.add_argument("--min-instr", type=int, default=DEFAULT_MIN_INSTRUCTIONS,
+                   help="skip classes below this instruction count "
+                        f"(default {DEFAULT_MIN_INSTRUCTIONS})")
+    p.add_argument("--libsigs", metavar="PACK", default=None,
+                   help="known-library catalogue pack to exclude library classes "
+                        "(defaults to $TWINFLAME_LIBSIGS or ~/.cache/twinflame/libsigs.tflp)")
+    p.add_argument("--no-libsigs", action="store_true",
+                   help="skip the library-dictionary exclusion")
+    p.add_argument("--normalize", action="store_true",
+                   help="run Redex before fingerprinting any APK/.dex input")
+    p.add_argument("--json", action="store_true", help="emit the build summary as JSON")
+    args = p.parse_args(argv)
+
+    from . import family as family_mod
+    from .loader import LoadError
+
+    if len(args.samples) < 2:
+        raise SystemExit("error: a family needs at least 2 samples")
+    n = len(args.samples)
+    k = n if args.k is None else args.k
+    if not 1 <= k <= n:
+        raise SystemExit(f"error: -k must be in 1..{n} (got {k})")
+    if k < -(-n // 2):  # ceil(n/2)
+        print(f"warning: -k {k} of {n} keeps structure shared by a minority of "
+              "samples — this stops meaning 'the family core'", file=sys.stderr)
+
+    # Library exclusion: same soft discovery as the score path.
+    detector = None
+    libsigs_pack = None
+    if args.libsigs and not Path(args.libsigs).is_file():
+        raise SystemExit(f"error: --libsigs pack not found: {args.libsigs}")
+    if not args.no_libsigs:
+        from . import libdict
+        libsigs_pack = libdict.find_pack(args.libsigs)
+        if libsigs_pack is not None:
+            detector = libdict.load_detector(
+                libsigs_pack, log=lambda m: print(m, file=sys.stderr))
+
+    t = time.perf_counter()
+    samples: list[family_mod.FamilySample] = []
+    seen_digests: dict[str, str] = {}
+    n_seen = n_kept = n_lib = 0
+    for i, sp in enumerate(args.samples):
+        try:
+            label, digest, classes = family_mod.load_family_sample(
+                sp, normalize=args.normalize)
+        except (LoadError, ValueError, OSError) as e:
+            raise SystemExit(f"error: {sp}: {e}")
+        if digest in seen_digests:
+            print(f"warning: {label} is byte-identical to {seen_digests[digest]} "
+                  "— it adds no coverage", file=sys.stderr)
+        seen_digests.setdefault(digest, label)
+        kept, lib_excluded = family_mod.filter_sample_classes(
+            classes, detector=detector, min_instructions=args.min_instr)
+        if not kept:
+            print(f"warning: {label}: no classes survive filtering", file=sys.stderr)
+        n_seen += len(classes)
+        n_kept += len(kept)
+        n_lib += lib_excluded
+        samples.append(family_mod.FamilySample(
+            sample_id=i, label=label, digest=digest, classes=tuple(kept)))
+    if detector is not None:
+        print(f"libsigs: excluded {n_lib} library classes across {n} samples "
+              f"({libsigs_pack})", file=sys.stderr)
+
+    try:
+        fam = family_mod.build_family(
+            samples, name=args.name or args.output.stem, k=k, radius=args.radius,
+            min_instructions=args.min_instr)
+    except ImportError as e:
+        raise SystemExit(f"error: {e}")
+    if not fam.entries:
+        raise SystemExit(
+            f"error: no class clusters reach {k} of {n} samples at radius "
+            f"{args.radius} — the samples don't share structure at this "
+            "strictness (lower -k or raise --radius)")
+    family_mod.save_family(fam, args.output, extra_meta={
+        "libsigs_pack": str(libsigs_pack) if libsigs_pack else None,
+        "excluded_library_classes": n_lib,
+    })
+
+    full = sum(1 for e in fam.entries if e.coverage == n)
+    if args.json:
+        import json
+        print(json.dumps({
+            "pack": str(args.output), "family": fam.name,
+            "n_samples": n, "k": k, "radius": args.radius,
+            "classes_seen": n_seen, "classes_kept": n_kept,
+            "library_excluded": n_lib,
+            "entries": len(fam.entries), "entries_full_coverage": full,
+        }))
+    else:
+        print(f"family pack: {args.output}")
+        print(f"  family:   {fam.name}  ({n} samples, k={k}, radius {args.radius})")
+        print(f"  classes:  {n_seen:,} seen -> {n_kept:,} after filters "
+              f"({n_lib} known-library excluded)")
+        print(f"  entries:  {len(fam.entries):,} shared clusters "
+              f"({full:,} in all {n} samples)")
+    print(f"family build: {time.perf_counter() - t:.2f}s", file=sys.stderr)
+    return 0
+
+
+def _main_family_match(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(
+        prog="twinflame family match",
+        description="Containment of a family signature pack in an unknown sample "
+                    "(or rank every family pack in a directory).",
+    )
+    from .family import DEFAULT_MIN_INSTRUCTIONS
+
+    p.add_argument("pack", type=Path, metavar="PACK_OR_DIR",
+                   help="a family .tflp pack, or a directory scanned for *.tflp")
+    p.add_argument("candidate", type=Path,
+                   help="the sample under test: a .tfr record, APK, .dex, or dir")
+    p.add_argument("-R", "--radius", type=int, default=None,
+                   help="Hamming radius for 'family class present'. Default: the "
+                        "pack's own build radius — the drift the builder already "
+                        "sized to the samples (obfuscated malware needs ~8; the "
+                        "R8-renaming default is 4). A larger radius inflates "
+                        "unrelated scores via signature density.")
+    p.add_argument("--no-strings", dest="use_strings", action="store_false", default=True,
+                   help="ignore tier-3 string-anchor hits (signature tiers only)")
+    p.add_argument("--min-instr", type=int, default=DEFAULT_MIN_INSTRUCTIONS,
+                   help="don't probe candidate classes below this instruction "
+                        f"count (default {DEFAULT_MIN_INSTRUCTIONS})")
+    p.add_argument("--evidence", type=int, metavar="N", default=0,
+                   help="also print the N best matching class pairs")
+    p.add_argument("--threshold", type=float, default=None, metavar="T",
+                   help="exit 1 unless the (best) score reaches T")
+    p.add_argument("--json", action="store_true", help="emit result(s) as JSON")
+    p.add_argument("--normalize", action="store_true",
+                   help="run Redex before fingerprinting an APK/.dex candidate")
+    args = p.parse_args(argv)
+
+    from . import family as family_mod
+    from .loader import LoadError
+
+    print("warning: `family match` is experimental — the score separates family "
+          "from unrelated samples (measured), but the absolute floor is "
+          "uncalibrated: radius-density inflates negatives, and a small family "
+          "is trivially 'contained' in any large app. Compare scores and tighten "
+          "-R rather than trusting an absolute threshold.", file=sys.stderr)
+
+    if args.pack.is_dir():
+        packs = sorted(args.pack.glob("*.tflp"))
+        if not packs:
+            raise SystemExit(f"error: no .tflp packs in {args.pack}")
+    else:
+        if not args.pack.is_file():
+            raise SystemExit(f"error: pack not found: {args.pack}")
+        packs = [args.pack]
+
+    t = time.perf_counter()
+    try:
+        cand_app = _resolve_side(args.candidate, args.normalize)
+    except LoadError as e:
+        raise SystemExit(f"error: {e}")
+    candidate = list(cand_app.classes)
+
+    try:
+        from twinflame_libsigs.pack import read_meta
+        from twinflame_libsigs.store import StaleStoreError
+    except ImportError:
+        raise SystemExit(f"error: {family_mod._LIBSIGS_HINT}")
+
+    from .score import DEFAULT_MATCH_RADIUS
+    results: list = []
+    radius_by_pack: dict = {}
+    for pk in packs:
+        meta = read_meta(pk)
+        if meta.get("kind") != family_mod.PACK_KIND:
+            if len(packs) == 1:
+                raise SystemExit(f"error: {pk} is not a family pack "
+                                 f"(meta.kind = {meta.get('kind')!r})")
+            continue  # a libsigs catalogue living in the same directory
+        # Default the match radius to the pack's build radius (the drift the
+        # builder sized to the samples); -R overrides.
+        radius = (args.radius if args.radius is not None
+                  else meta.get("radius_build", DEFAULT_MATCH_RADIUS))
+        radius_by_pack[str(pk)] = radius
+        try:
+            detector, meta, payloads = family_mod.load_family_detector(
+                pk, radius=radius)
+        except (StaleStoreError, ValueError, OSError) as e:
+            print(f"error: {pk}: {e}", file=sys.stderr)
+            continue
+        results.append(family_mod.match_family(
+            detector, meta, payloads, candidate, pack=str(pk),
+            use_strings=args.use_strings,
+            probe_min_instructions=args.min_instr))
+    if not results:
+        raise SystemExit("error: no usable family pack")
+    results.sort(key=lambda r: -r.score)
+
+    def tiers(r) -> str:
+        return (f"{r.by_tier.get(1, 0)} exact / {r.by_tier.get(2, 0)} radius / "
+                f"{r.by_tier.get(3, 0)} string")
+
+    if args.json:
+        import json
+        payload = [{
+            "family": r.family, "pack": r.pack, "score": round(r.score, 6),
+            "present": r.present, "total": r.total,
+            "weight_present": r.weight_present, "weight_total": r.weight_total,
+            "by_tier": {str(k_): v for k_, v in sorted(r.by_tier.items())},
+            "radius": radius_by_pack.get(r.pack),
+            **({"evidence": [
+                {"family_class": f, "candidate": c, "tier": ti, "distance": d}
+                for f, c, ti, d in r.evidence[:args.evidence]
+            ]} if args.evidence else {}),
+        } for r in results]
+        print(json.dumps(payload[0] if len(packs) == 1 else payload))
+    else:
+        for r in results:
+            print(f"family {r.family}: containment {r.score:.4f}  "
+                  f"({r.present}/{r.total} entries present, "
+                  f"weight {r.weight_present}/{r.weight_total})")
+            print(f"  tiers: {tiers(r)}")
+            for f, c, ti, d in r.evidence[:args.evidence]:
+                dist = f"Δ{d}" if d >= 0 else "string"
+                print(f"  {f}  ~  {c}  (t{ti} {dist})")
+    used = sorted(set(radius_by_pack.values()))
+    print(f"family match: {time.perf_counter() - t:.2f}s "
+          f"(radius {used[0] if len(used) == 1 else used}, "
+          f"{len(results)} pack(s))", file=sys.stderr)
+    if args.threshold is not None:
+        return 0 if results[0].score >= args.threshold else 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv and argv[0] == "prepare":
@@ -415,6 +688,8 @@ def main(argv: list[str] | None = None) -> int:
         return _main_score(argv[1:])
     if argv and argv[0] == "migrate":
         return _main_migrate(argv[1:])
+    if argv and argv[0] == "family":
+        return _main_family(argv[1:])
     if argv and argv[0] == "compare":
         # Alias of the default diff, for discoverability of the prepare/compare
         # split — records, APKs, .dex and mixes all resolve per _resolve_side.
