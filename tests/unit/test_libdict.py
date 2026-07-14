@@ -71,6 +71,8 @@ def test_find_pack_resolution(tmp_path, monkeypatch):
     pack = tmp_path / "p.tflp"
     pack.write_bytes(b"x")
     monkeypatch.delenv(libdict.ENV_PACK, raising=False)
+    # isolate from a pack genuinely installed at the default cache path
+    monkeypatch.setattr(libdict, "DEFAULT_PACK_PATH", tmp_path / "absent.tflp")
     assert libdict.find_pack(str(pack)) == pack
     assert libdict.find_pack(str(tmp_path / "missing.tflp")) is None
     monkeypatch.setenv(libdict.ENV_PACK, str(pack))
