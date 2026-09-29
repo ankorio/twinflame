@@ -94,6 +94,10 @@ class FamilyMatchResult:
     weight_total: int
     by_tier: Dict[int, int]        # tier (1 exact / 2 radius / 3 string) -> entries
     evidence: Tuple[Tuple[str, str, int, int], ...]  # (fqcn, cand desc, tier, dist)
+    # Same hits keyed by payload id, for callers that need the entry identity
+    # rather than its (possibly duplicated) name: (payload_id, fqcn, cand desc,
+    # tier, dist), in `evidence` order.
+    hits: Tuple[Tuple[int, str, str, int, int], ...] = ()
 
 
 # --- ingestion ----------------------------------------------------------------
@@ -231,9 +235,17 @@ def build_family(
     )
 
 
-def save_family(fam: FamilySignature, path: Path, *, extra_meta: Optional[dict] = None) -> None:
+def save_family(
+    fam: FamilySignature,
+    path: Path,
+    *,
+    extra_meta: Optional[dict] = None,
+    payload_extra: Optional[Dict[int, dict]] = None,
+) -> None:
     """Write the family as a `.tflp` pack (+ `.idx.json` sidecar), stamped with
-    the running `SIGNATURE_STAMP`."""
+    the running `SIGNATURE_STAMP`. `payload_extra[i]` is merged into entry
+    `i`'s sidecar record (caller-owned keys such as notes); it cannot override
+    the fixed keys."""
     try:
         from twinflame_libsigs.pack import write_pack
     except ImportError as e:
@@ -251,6 +263,11 @@ def save_family(fam: FamilySignature, path: Path, *, extra_meta: Optional[dict] 
         }
         for i, e in enumerate(fam.entries)
     }
+    for i, extra in (payload_extra or {}).items():
+        rec = sidecar.get(str(i))
+        if rec is None:
+            raise ValueError(f"payload_extra refers to entry {i}, pack has {len(fam.entries)}")
+        rec.update({k: v for k, v in extra.items() if k not in rec})
     meta = {
         "kind": PACK_KIND,
         "family": fam.name,
@@ -263,6 +280,57 @@ def save_family(fam: FamilySignature, path: Path, *, extra_meta: Optional[dict] 
     if extra_meta:
         meta.update(extra_meta)
     write_pack(path, stream, sidecar, sig_stamp=SIGNATURE_STAMP, meta=meta)
+
+
+def build_curated_pack(
+    classes: Sequence[Class],
+    *,
+    name: str,
+    sample_ids: Optional[Sequence[int]] = None,
+    samples: Sequence[Tuple[str, str]] = (),
+    radius: int = DEFAULT_BUILD_RADIUS,
+    min_instructions: int = DEFAULT_MIN_INSTRUCTIONS,
+) -> FamilySignature:
+    """A hand-curated family: one entry per given class, in the given order
+    (so entry id == position), no clustering and no filtering — the analyst
+    already chose. `sample_ids[i]` is the index into `samples` the class came
+    from (all 0 when omitted). `radius` is stored as `radius_build`, which
+    `family match` uses as its default match radius, so pass the drift you
+    expect for this family. Needs `twinflame_libsigs` for `useful_strings`."""
+    try:
+        from twinflame_libsigs.strings import useful_strings
+    except ImportError as e:
+        raise ImportError(_LIBSIGS_HINT) from e
+    if not classes:
+        raise ValueError("a curated pack needs at least one class")
+    if sample_ids is not None and len(sample_ids) != len(classes):
+        raise ValueError("sample_ids must be parallel to classes")
+    samples = tuple(samples) or (("curated", ""),)
+    entries = []
+    for i, c in enumerate(classes):
+        sid = sample_ids[i] if sample_ids is not None else 0
+        if not 0 <= sid < len(samples):
+            raise ValueError(f"sample id {sid} out of range for {len(samples)} sample(s)")
+        strings = tuple(sorted(useful_strings(c.strings),
+                               key=lambda s: (-len(s), s))[:MAX_ENTRY_STRINGS])
+        entries.append(FamilyEntry(
+            signature=(c.signature or compute_signature(c)).combined,
+            fqcn=_fqcn(c),
+            strings=strings,
+            instructions=c.total_instructions,
+            coverage=1,
+            sample_ids=(sid,),
+            max_dist=0,
+        ))
+    return FamilySignature(
+        name=name,
+        n_samples=len(samples),
+        k=1,
+        radius_build=radius,
+        min_instructions=min_instructions,
+        samples=tuple(samples),
+        entries=tuple(entries),
+    )
 
 
 # --- match ----------------------------------------------------------------------
@@ -317,12 +385,13 @@ def match_family(
     weight_total = sum(weight(p) for p in payloads.values())
     weight_present = sum(weight(payloads[str(pid)]) for pid in best if str(pid) in payloads)
     by_tier: Dict[int, int] = {}
-    evidence = []
+    hits = []
     for pid, ((tier, dist), c) in best.items():
         by_tier[tier] = by_tier.get(tier, 0) + 1
         fqcn = payloads.get(str(pid), {}).get("fqcn", f"payload/{pid}")
-        evidence.append((fqcn, c.descriptor, tier, dist))
-    evidence.sort(key=lambda e: (e[2], e[3], e[0]))
+        hits.append((pid, fqcn, c.descriptor, tier, dist))
+    hits.sort(key=lambda h: (h[3], h[4], h[1], h[0]))
+    evidence = [(fqcn, desc, tier, dist) for _, fqcn, desc, tier, dist in hits]
     return FamilyMatchResult(
         family=meta.get("family", "?"),
         pack=pack,
@@ -333,4 +402,5 @@ def match_family(
         weight_total=weight_total,
         by_tier=by_tier,
         evidence=tuple(evidence),
+        hits=tuple(hits),
     )
