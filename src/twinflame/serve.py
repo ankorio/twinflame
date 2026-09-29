@@ -180,6 +180,15 @@ def _fqcn(c: Class) -> str:
     return f"{c.package}.{c.name}" if c.package else c.name
 
 
+def _anchor_strings(c: Class) -> List[str]:
+    try:
+        from twinflame_libsigs.strings import useful_strings
+    except ImportError:
+        return []
+    from .family import MAX_ENTRY_STRINGS
+    return sorted(useful_strings(c.strings), key=lambda s: (-len(s), s))[:MAX_ENTRY_STRINGS]
+
+
 class Session:
     """State behind one `serve` process: the loaded inputs plus lazily built
     helpers (the library dictionary detector)."""
@@ -324,10 +333,14 @@ class Session:
             "min_instructions": family.DEFAULT_MIN_INSTRUCTIONS,
             "libsigs": libsigs,
             "duplicates": [i for i in self._holders(c.descriptor) if i != inp.index],
+            # the tier-3 anchors a pack entry for this class would carry (same
+            # selection as build_curated_pack), for append-only addition records
+            "anchor_strings": _anchor_strings(c),
+            "method_ids": [f"{m.name}{m.descriptor}" for m in c.methods],
         }
 
     def op_pack_build(self, params: dict) -> dict:
-        """`entries: [{input_index, descriptor, note?}]`, `name`, `out_dir`,
+        """`entries: [{input_index, descriptor, note?, methods?}]`, `name`, `out_dir`,
         `meta?` (merged into the pack meta), `filename?` (default pack.tflp),
         `radius?`, `min_instructions?`. Writes the pack + sidecar; returns
         their hashes so the caller can seal a manifest."""
@@ -359,6 +372,12 @@ class Session:
                 "input_index": inp.index, "input": inp.path.name, "digest": inp.digest,
                 "note": spec.get("note") or "",
             }
+            methods = spec.get("methods")
+            if methods:
+                # analyst-selected methods of the class, kept for the method-level
+                # matcher (v2); the class signature is still what v1 matches on
+                known = {f"{m.name}{m.descriptor}" for m in c.methods}
+                payload_extra[i]["methods"] = [m for m in methods if m in known]
         kwargs: Dict[str, Any] = {}
         if params.get("radius") is not None:
             kwargs["radius"] = int(params["radius"])

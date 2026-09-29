@@ -110,6 +110,8 @@ def test_load_keeps_inputs_separate_and_reports_duplicates(tmp_path, inputs):
     d0 = _call(s, "describe", input_index=0, descriptor="La/Shared;")
     assert d0["signature"] == d["signature"]      # same structure, same signature
     assert d0["duplicates"] == [1]
+    assert d["anchor_strings"] == ["http://c2.example/x"] and d0["anchor_strings"] == []
+    assert d["method_ids"] and all(m.startswith("m") and "(" in m for m in d["method_ids"])
 
 
 def test_describe_unknown_class_or_input(tmp_path, inputs):
@@ -153,7 +155,8 @@ def test_pack_build_then_match_finds_payload_in_the_dump_only(tmp_path, inputs):
     _load(s, inputs)
     out = tmp_path / "db" / "packs" / "01-tester"
     b = _call(s, "pack.build", name="evilfam",
-              entries=[{"input_index": 1, "descriptor": "La/Payload;", "note": "the dropper"},
+              entries=[{"input_index": 1, "descriptor": "La/Payload;", "note": "the dropper",
+                        "methods": ["m0()V", "nope()V"]},
                        {"input_index": 1, "descriptor": "La/Shared;"}],
               out_dir=str(out), meta={"family": "evilfam", "tags": ["dropper"]}, radius=6)
     assert b["n_entries"] == 2 and b["radius_build"] == 6 and b["stamp"] == SIGNATURE_STAMP
@@ -165,6 +168,9 @@ def test_pack_build_then_match_finds_payload_in_the_dump_only(tmp_path, inputs):
     assert sidecar["payloads"]["0"]["descriptor"] == "La/Payload;"
     assert sidecar["payloads"]["0"]["input_index"] == 1
     assert sidecar["payloads"]["1"]["note"] == ""
+    assert "methods" not in sidecar["payloads"]["1"]
+    meth = sidecar["payloads"]["0"]["methods"]
+    assert len(meth) == 1 and meth[0].startswith("m0(")   # unknown method ids are dropped
 
     events = []
     resp = serve.dispatch(s, {"v": 1, "id": "m", "op": "pack.match",
