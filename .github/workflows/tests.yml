@@ -23,5 +23,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e '.[test]'
+          # companion package: without it the family / serve tests skip themselves
+          pip install --pre twinflame-libsigs
       - name: Run tests
         run: pytest -q
