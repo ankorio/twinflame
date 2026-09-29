@@ -41,6 +41,8 @@ def _build_parser() -> argparse.ArgumentParser:
             "  twinflame family match ...   containment of a family pack in an unknown\n"
             "                               sample, or rank a directory of packs;\n"
             "                               family match --help\n"
+            "  twinflame serve              long-lived NDJSON request loop for plugins\n"
+            "                               (jadx etc.); see serve --help\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -680,8 +682,46 @@ def _main_family_match(argv: list[str]) -> int:
     return 0
 
 
+def _main_serve(argv: list[str]) -> int:
+    """`twinflame serve` — answer NDJSON requests on stdin until it closes.
+    See `serve.py` for the protocol."""
+    p = argparse.ArgumentParser(
+        prog="twinflame serve",
+        description="Long-lived request loop for editor/decompiler plugins: "
+                    "NDJSON requests on stdin, one response line per request "
+                    "on stdout, logs on stderr.",
+    )
+    p.add_argument("--cache-dir", type=Path, default=None, metavar="DIR",
+                   help="reuse/write prepared .tfr records here, keyed by input sha256")
+    p.add_argument("--libsigs", metavar="PACK", default=None,
+                   help="known-library catalogue pack for describe verdicts "
+                        "(defaults to $TWINFLAME_LIBSIGS or ~/.cache/twinflame/libsigs.tflp)")
+    p.add_argument("--no-libsigs", action="store_true",
+                   help="never load the library dictionary")
+    p.add_argument("--log-level", default="WARNING",
+                   help="stderr log level for androguard/twinflame diagnostics (default WARNING)")
+    args = p.parse_args(argv)
+
+    # androguard logs every parsed DEX section at DEBUG through loguru; a
+    # plugin host only wants stderr for real problems.
+    try:
+        from loguru import logger
+        logger.remove()
+        logger.add(sys.stderr, level=args.log_level.upper())
+    except ImportError:
+        pass
+
+    from .serve import Session, run
+
+    session = Session(cache_dir=args.cache_dir, libsigs=args.libsigs,
+                      use_libsigs=not args.no_libsigs)
+    return run(session)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "serve":
+        return _main_serve(argv[1:])
     if argv and argv[0] == "prepare":
         return _main_prepare(argv[1:])
     if argv and argv[0] == "score":
