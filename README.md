@@ -238,6 +238,32 @@ jadx --mappings-path app-new.map -Prename-mappings.format=PROGUARD_FILE -Prename
   twinflame family match packs/ suspect_dump/
   ```
 
+### Plugin bridge: `twinflame serve`
+
+For editors and decompiler plugins (the jadx signature-DB plugin is the first host), `serve`
+keeps loaded inputs in memory and answers requests over stdin/stdout, one JSON object per line:
+
+```sh
+twinflame serve --cache-dir ~/.cache/twinflame/tfr   # optional: reuse prepared .tfr records
+```
+
+```
+-> {"v": 1, "id": 1, "op": "load", "params": {"inputs": [{"index": 0, "path": "app.apk"}, {"index": 1, "path": "dump/classes5.dex"}]}}
+<- {"id": 1, "event": "progress", "data": {"loaded": 0, "classes": 7}}
+<- {"id": 1, "ok": true, "result": {"inputs": [...], "stamp": "5086ab01a7168eac"}}
+-> {"v": 1, "id": 2, "op": "describe", "params": {"input_index": 1, "descriptor": "Lcom/evil/Loader;"}}
+<- {"id": 2, "ok": true, "result": {"signature": "…", "instructions": 182, "libsigs": null, "duplicates": [], ...}}
+```
+
+Ops: `hello`, `load`, `status`, `where`, `describe`, `pack.build` (a curated family pack from
+hand-picked classes), `pack.match` (containment of packs in every loaded input, with per-entry
+hits), `pack.list`, `shutdown`. Each input file is loaded on its own and addressed as
+`(input_index, descriptor)`, so a class present in an APK *and* in a dumped `.dex` stays two
+classes and a hit says which file it came from. Errors come back as `{"ok": false, "error":
+{"code", "message"}}` and never end the session; the full protocol is documented in
+`src/twinflame/serve.py`. Curated packs are ordinary family packs, so `twinflame family match`
+reads them too.
+
 ### Evaluation harness (`eval/`, plan M3.2)
 
 Grades twinflame's own class matches against real ground truth instead of eyeballing them. Build an OSS Android app **twice** — R8 off, then R8 on at full optimization — the `mapping.txt` R8 writes for the R8-on build is a free, perfect oracle for the renaming-only case (directly grades M1.1 + M1.2; inlining/outlining is a future difficulty-graded slice per M3.1).
