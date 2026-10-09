@@ -48,6 +48,24 @@ That's everything for the core tool. Two features need external programs that ar
 packages: `--normalize` needs **Redex** on `PATH` (optional; only for junk-instruction
 normalization), and applying a recovered `mapping.txt` needs your own decompiler (e.g. **JADX**).
 
+### Optional: native library-dictionary store (`twinflame[native]`)
+
+The library dictionary (a `twinflame_libsigs` pack — by default
+`~/.cache/twinflame/libsigs.tflp`, or the path in `$TWINFLAME_LIBSIGS` / `--libsigs`) is
+queried through a multi-index Hamming store. The `native` extra installs the prebuilt
+`tfls-mih` manylinux wheel for it:
+
+```sh
+pip install --pre "twinflame[native]"
+```
+
+Without it twinflame uses a pure-Python brute-force store that gives identical results but is
+10-100x slower on the ~50k-entry library pack — fine for a one-off run, noticeable in a plugin
+session that labels every class of a large dump. `twinflame serve`'s `hello` reports which store
+is active (`native_mih`) and summarises the pack it found (`libsigs`: entries, coordinates,
+build date, size). The pack itself is rebuilt offline with `twinflame-libsigs scrape` +
+`build` and copied to the path above; see the `twinflame_libsigs` README.
+
 ### Optional: native SimHash accelerator (build it yourself)
 
 The PyPI wheel is pure Python and works on its own. For ~8× faster fingerprinting (`prepare`,
@@ -257,7 +275,11 @@ twinflame serve --cache-dir ~/.cache/twinflame/tfr   # optional: reuse prepared 
 
 Ops: `hello`, `load`, `status`, `where`, `describe`, `pack.build` (a curated family pack from
 hand-picked classes), `pack.match` (containment of packs in every loaded input, with per-entry
-hits), `pack.list`, `shutdown`. Each input file is loaded on its own and addressed as
+hits — each hit carries its tier, distance, the detector's evidence `score` and the distinctive
+`strings` the two classes share, so a host can weigh and explain a string-only hit),
+`pack.nearest` (the closest entry of one pack for a list of classes at a wide radius — the
+neighbourhood of a hit, including classes the pack's own radius rejects), `pack.list`,
+`shutdown`. Each input file is loaded on its own and addressed as
 `(input_index, descriptor)`, so a class present in an APK *and* in a dumped `.dex` stays two
 classes and a hit says which file it came from. Errors come back as `{"ok": false, "error":
 {"code", "message"}}` and never end the session; the full protocol is documented in
