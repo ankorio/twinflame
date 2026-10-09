@@ -23,6 +23,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Native multi-index Hamming store for the library dictionary (twinflame_libsigs
+# packs): a prebuilt manylinux wheel. Without it the dictionary falls back to a
+# pure-Python brute-force store, 10-100x slower on the 50k-entry library pack.
+native = [
+    "tfls-mih",
+]
 test = [
     "pytest>=8",
     "pytest-cov>=5",
