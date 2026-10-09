@@ -24,9 +24,9 @@ silently come from a broken pack.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Sequence, Tuple
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from .model import Class, Signature
 from .signature import compute_signature
@@ -98,6 +98,12 @@ class FamilyMatchResult:
     # rather than its (possibly duplicated) name: (payload_id, fqcn, cand desc,
     # tier, dist), in `evidence` order.
     hits: Tuple[Tuple[int, str, str, int, int], ...] = ()
+    # Per hit, keyed by payload id: the detector's evidence score (1.0 for a
+    # signature hit, the summed IDF of the shared strings for a tier-3 hit)
+    # and the distinctive strings the candidate shares with the entry (filled
+    # only when `match_family` is given `entry_strings`).
+    hit_scores: Dict[int, float] = field(default_factory=dict)
+    hit_strings: Dict[int, Tuple[str, ...]] = field(default_factory=dict)
 
 
 # --- ingestion ----------------------------------------------------------------
@@ -360,13 +366,16 @@ def match_family(
     pack: str = "",
     use_strings: bool = True,
     probe_min_instructions: int = DEFAULT_MIN_INSTRUCTIONS,
+    entry_strings: Optional[Mapping[int, Sequence[str]]] = None,
 ) -> FamilyMatchResult:
     """Containment of the family in `candidate`: every candidate class probes
     the detector; each family entry counts as present through its best hit
     (lowest tier, then distance). Score weights entries by
     `(instructions + 1) * coverage`, so big classes shared by every sample
-    dominate small ones that barely cleared k."""
-    best: Dict[int, tuple[tuple[int, int], Class]] = {}   # pid -> ((tier, dist), class)
+    dominate small ones that barely cleared k. With `entry_strings` (payload
+    id -> the entry's strings) every hit also reports the distinctive strings
+    the two classes share, so a caller can show *why* a tier-3 hit fired."""
+    best: Dict[int, tuple[tuple[int, int], Class, float]] = {}   # pid -> ((tier, dist), class, score)
     for c in candidate:
         if c.total_instructions < probe_min_instructions:
             continue
@@ -377,7 +386,7 @@ def match_family(
         key = (hit.tier, hit.distance)
         prev = best.get(hit.payload_id)
         if prev is None or key < prev[0]:
-            best[hit.payload_id] = (key, c)
+            best[hit.payload_id] = (key, c, hit.score)
 
     def weight(p: dict) -> int:
         return (p.get("instructions", 0) + 1) * p.get("coverage", 1)
@@ -386,10 +395,15 @@ def match_family(
     weight_present = sum(weight(payloads[str(pid)]) for pid in best if str(pid) in payloads)
     by_tier: Dict[int, int] = {}
     hits = []
-    for pid, ((tier, dist), c) in best.items():
+    hit_scores: Dict[int, float] = {}
+    hit_strings: Dict[int, Tuple[str, ...]] = {}
+    for pid, ((tier, dist), c, score) in best.items():
         by_tier[tier] = by_tier.get(tier, 0) + 1
         fqcn = payloads.get(str(pid), {}).get("fqcn", f"payload/{pid}")
         hits.append((pid, fqcn, c.descriptor, tier, dist))
+        hit_scores[pid] = float(score)
+        if entry_strings is not None:
+            hit_strings[pid] = shared_strings(c.strings, entry_strings.get(pid, ()))
     hits.sort(key=lambda h: (h[3], h[4], h[1], h[0]))
     evidence = [(fqcn, desc, tier, dist) for _, fqcn, desc, tier, dist in hits]
     return FamilyMatchResult(
@@ -403,4 +417,14 @@ def match_family(
         by_tier=by_tier,
         evidence=tuple(evidence),
         hits=tuple(hits),
+        hit_scores=hit_scores,
+        hit_strings=hit_strings,
     )
+
+
+def shared_strings(candidate: Iterable[str], entry: Iterable[str]) -> Tuple[str, ...]:
+    """Distinctive strings two classes have in common — the evidence behind a
+    tier-3 hit — longest first."""
+    from twinflame_libsigs.strings import useful_strings
+    common = useful_strings(candidate) & useful_strings(entry)
+    return tuple(sorted(common, key=lambda s: (-len(s), s)))
