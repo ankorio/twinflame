@@ -15,7 +15,7 @@ Wire format (protocol version 1):
     <- {"id": <same>, "event": "progress", "data": {...}}     (0..n, before the response)
 
 Ops: `hello`, `load`, `status`, `where`, `describe`, `pack.build`,
-`pack.match`, `pack.list`, `shutdown`. See the handlers below for parameters
+`pack.match`, `pack.nearest`, `pack.list`, `shutdown`. See the handlers below for parameters
 and results; `Session` and `dispatch` are usable in-process (tests, other
 Python hosts) without the stdin/stdout loop.
 
@@ -53,6 +53,10 @@ _LIBSIGS_HINT = (
     "pack operations require the twinflame_libsigs package "
     "(pip install twinflame_libsigs)"
 )
+
+# `pack.nearest` default: wide enough to show a class that is *almost* an
+# entry (a quarter of the 128 signature bits) without listing everything.
+NEAREST_RADIUS = 32
 
 
 class ServeError(Exception):
@@ -187,6 +191,45 @@ def _anchor_strings(c: Class) -> List[str]:
         return []
     from .family import MAX_ENTRY_STRINGS
     return sorted(useful_strings(c.strings), key=lambda s: (-len(s), s))[:MAX_ENTRY_STRINGS]
+
+
+def _read_pack_spec(spec: dict) -> tuple[list, dict, dict, list]:
+    """Entries, payloads and meta of one pack spec (`path`, `extra_entries?`)
+    as `pack.match` / `pack.nearest` take it, the extra entries appended with
+    ids continuing after the pack's own — the append-only feedback loop.
+    Raises `ServeError("stale-stamp" | "unreadable")` for a pack that cannot
+    be used; extra entries without a valid hex signature are dropped and their
+    would-be ids returned as the fourth element."""
+    from twinflame_libsigs.pack import read_meta, read_pack
+    from twinflame_libsigs.store import StaleStoreError
+
+    path = Path(spec.get("path", ""))
+    try:
+        entries, payloads, _ = read_pack(path, expect_stamp=_prepare.SIGNATURE_STAMP)
+    except StaleStoreError as e:
+        raise ServeError("stale-stamp", str(e)) from e
+    except (OSError, ValueError) as e:
+        raise ServeError("unreadable", str(e)) from e
+    meta = read_meta(path)
+    entries = list(entries)
+    payloads = dict(payloads)
+    bad_extra: list = []
+    for extra in spec.get("extra_entries") or []:
+        pid = len(entries)
+        try:
+            sig = int(extra["signature"], 16)
+        except (KeyError, TypeError, ValueError):
+            bad_extra.append(pid)
+            continue
+        entries.append((pid, sig, tuple(extra.get("strings") or ())))
+        payloads[str(pid)] = {
+            "fqcn": extra.get("fqcn", f"extra/{pid}"),
+            "coverage": 1, "samples": [], "max_dist": 0,
+            "instructions": int(extra.get("instructions", 0)),
+            **{k: v for k, v in extra.items() if k not in ("signature", "strings")},
+            "extra": True,
+        }
+    return entries, payloads, meta, bad_extra
 
 
 class Session:
@@ -449,33 +492,13 @@ class Session:
             path = Path(spec.get("path", ""))
             pack_id = spec.get("id") or path.stem
             try:
-                entries, payloads, _ = read_pack(path, expect_stamp=_prepare.SIGNATURE_STAMP)
-            except StaleStoreError as e:
-                skipped.append({"id": pack_id, "path": str(path), "reason": "stale-stamp", "message": str(e)})
+                entries, payloads, meta, bad_extra = _read_pack_spec(spec)
+            except ServeError as e:
+                skipped.append({"id": pack_id, "path": str(path), "reason": e.code, "message": e.message})
                 continue
-            except (OSError, ValueError) as e:
-                skipped.append({"id": pack_id, "path": str(path), "reason": "unreadable", "message": str(e)})
-                continue
-            meta = read_meta(path)
-            payloads = dict(payloads)
-            for extra in spec.get("extra_entries") or []:
-                pid = len(entries)
-                try:
-                    sig = int(extra["signature"], 16)
-                except (KeyError, TypeError, ValueError):
-                    skipped.append({"id": pack_id, "path": str(path), "reason": "bad-extra-entry",
-                                    "message": f"extra entry {pid} has no valid hex 'signature'"})
-                    sig = None
-                if sig is None:
-                    continue
-                entries.append((pid, sig, tuple(extra.get("strings") or ())))
-                payloads[str(pid)] = {
-                    "fqcn": extra.get("fqcn", f"extra/{pid}"),
-                    "coverage": 1, "samples": [], "max_dist": 0,
-                    "instructions": int(extra.get("instructions", 0)),
-                    **{k: v for k, v in extra.items() if k not in ("signature", "strings")},
-                    "extra": True,
-                }
+            for pid in bad_extra:
+                skipped.append({"id": pack_id, "path": str(path), "reason": "bad-extra-entry",
+                                "message": f"extra entry {pid} has no valid hex 'signature'"})
             radius = spec.get("radius")
             if radius is None:
                 radius = meta.get("radius_build", DEFAULT_MATCH_RADIUS)
@@ -484,10 +507,12 @@ class Session:
             if min_instr is None:
                 min_instr = meta.get("min_instr", family.DEFAULT_MIN_INSTRUCTIONS)
             detector = LibraryDetector.build(entries, radius=radius)
+            entry_strings = {pid: strs for pid, _sig, strs in entries}
             for inp in targets:
                 r = family.match_family(
                     detector, meta, payloads, inp.classes, pack=str(path),
-                    use_strings=use_strings, probe_min_instructions=int(min_instr))
+                    use_strings=use_strings, probe_min_instructions=int(min_instr),
+                    entry_strings=entry_strings)
                 row = {
                     "pack_id": pack_id, "path": str(path), "input_index": inp.index,
                     "input": str(inp.path), "family": r.family,
@@ -498,6 +523,10 @@ class Session:
                     "hits": [
                         {"entry_id": pid, "entry_fqcn": fqcn, "descriptor": desc,
                          "tier": tier, "distance": dist,
+                         # evidence: 1.0 for a signature hit, summed IDF of the
+                         # shared strings for a tier-3 hit; plus those strings
+                         "score": round(r.hit_scores.get(pid, 1.0), 4),
+                         "strings": list(r.hit_strings.get(pid, ())),
                          "entry_instructions": payloads.get(str(pid), {}).get("instructions", 0),
                          "note": payloads.get(str(pid), {}).get("note", ""),
                          "extra": bool(payloads.get(str(pid), {}).get("extra", False))}
@@ -510,6 +539,51 @@ class Session:
                           "input_index": inp.index, "score": row["score"], "present": r.present,
                           "total": r.total})
         return {"results": results, "skipped": skipped, "stamp": _prepare.SIGNATURE_STAMP}
+
+    def op_pack_nearest(self, params: dict) -> dict:
+        """`path`, `input_index`, `descriptors: [...]`, `radius?` (default
+        `NEAREST_RADIUS`), `extra_entries?` (as in `pack.match`),
+        `use_strings?` (default true). For each class its closest pack entry
+        within the radius — the probe `pack.match` runs, at a radius wide
+        enough to show classes that are *nearly* an entry but fall outside
+        the pack's own radius (the neighbourhood of a hit). A class the input
+        does not hold (`missing: true`) or with no entry within the radius
+        gets `entry_id: null`."""
+        try:
+            from . import family
+            from twinflame_libsigs.detect import LibraryDetector
+        except ImportError as e:
+            raise ServeError("no-libsigs", _LIBSIGS_HINT) from e
+        descriptors = params.get("descriptors")
+        if not isinstance(descriptors, list):
+            raise ServeError("bad-params", "pack.nearest needs a 'descriptors' list")
+        inp = self._input(params.get("input_index"))
+        path = Path(params.get("path", ""))
+        entries, payloads, _meta, _bad = _read_pack_spec(params)
+        radius = int(params.get("radius", NEAREST_RADIUS))
+        use_strings = bool(params.get("use_strings", True))
+        detector = LibraryDetector.build(entries, radius=radius)
+        entry_strings = {pid: strs for pid, _sig, strs in entries}
+        results = []
+        for desc in descriptors:
+            c = inp.by_desc.get(desc)
+            row: Dict[str, Any] = {"descriptor": desc, "entry_id": None, "missing": c is None}
+            if c is not None:
+                row["instructions"] = c.total_instructions
+                sig = c.signature or compute_signature(c)
+                hit = detector.detect(sig.combined, c.strings)
+                if hit is not None and (use_strings or hit.tier != 3):
+                    p = payloads.get(str(hit.payload_id), {})
+                    row.update({
+                        "entry_id": hit.payload_id, "entry_fqcn": p.get("fqcn", f"payload/{hit.payload_id}"),
+                        "tier": hit.tier, "distance": hit.distance, "score": round(hit.score, 4),
+                        "strings": list(family.shared_strings(c.strings, entry_strings.get(hit.payload_id, ()))),
+                        "entry_instructions": p.get("instructions", 0), "note": p.get("note", ""),
+                        "extra": bool(p.get("extra", False)),
+                    })
+            results.append(row)
+        return {"pack_id": params.get("id") or path.stem, "path": str(path), "radius": radius,
+                "results": results, "stamp": _prepare.SIGNATURE_STAMP}
 
     def op_pack_list(self, params: dict) -> dict:
         """`dir`, `recursive?` (default true): every `.tflp` under it with its
@@ -555,6 +629,7 @@ _OPS: Dict[str, str] = {
     "describe": "op_describe",
     "pack.build": "op_pack_build",
     "pack.match": "op_pack_match",
+    "pack.nearest": "op_pack_nearest",
     "pack.list": "op_pack_list",
     "shutdown": "op_shutdown",
 }

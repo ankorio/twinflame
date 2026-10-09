@@ -185,6 +185,10 @@ def test_pack_build_then_match_finds_payload_in_the_dump_only(tmp_path, inputs):
     hit = next(h for h in rows[1]["hits"] if h["entry_id"] == 0)
     assert hit["descriptor"] == "La/Payload;" and hit["tier"] == 1 and hit["distance"] == 0
     assert hit["note"] == "the dropper"
+    assert hit["score"] == 1.0 and hit["strings"] == []
+    # the dump's Shared carries the c2 string the entry was built from; the apk's copy does not
+    assert next(h for h in rows[1]["hits"] if h["entry_id"] == 1)["strings"] == ["http://c2.example/x"]
+    assert next(h for h in rows[0]["hits"] if h["entry_id"] == 1)["strings"] == []
     assert rows[1]["radius"] == 6            # pack's radius_build is the default
     assert [e["event"] for e in events] == ["progress", "progress"]
     assert all(e["id"] == "m" for e in events)
@@ -219,6 +223,50 @@ def test_pack_match_extra_entries_and_stale_pack(tmp_path, inputs):
     assert {row["pack_id"] for row in r["results"]} == {"pack"}
     lst = _call(s, "pack.list", dir=str(tmp_path), recursive=False)["packs"]
     assert [p["stamp_ok"] for p in lst if p["path"] == str(stale)] == [False]
+
+
+def test_pack_match_reports_string_evidence(tmp_path, inputs):
+    """A tier-3 hit says which distinctive strings fired and how much IDF
+    evidence they carry, so a host can show why — and weigh — a string-only hit."""
+    s = _session(tmp_path)
+    _load(s, inputs)
+    b = _call(s, "pack.build", name="f", out_dir=str(tmp_path / "p"),
+              entries=[{"input_index": 0, "descriptor": "La/OnlyApk;"}], radius=2)
+    far = {"signature": "0" * 32, "fqcn": "x.Far", "instructions": 50,
+           "strings": ["http://c2.example/x", "zzz-not-in-the-sample"]}
+    r = _call(s, "pack.match", inputs=[1], packs=[{"id": "f", "path": b["path"], "extra_entries": [far]}])
+    (row,) = r["results"]
+    (hit,) = row["hits"]
+    assert hit["descriptor"] == "La/Shared;" and hit["entry_id"] == 1 and hit["extra"] is True
+    assert hit["tier"] == 3 and hit["distance"] == -1
+    assert hit["score"] >= 1.0 and hit["strings"] == ["http://c2.example/x"]
+    assert row["present"] == 1 and 0 < row["score"] < 1     # containment still counts it as present
+
+
+def test_pack_nearest_reports_the_closest_entry_beyond_the_pack_radius(tmp_path, inputs):
+    s = _session(tmp_path)
+    _load(s, inputs)
+    b = _call(s, "pack.build", name="f", out_dir=str(tmp_path / "p"),
+              entries=[{"input_index": 1, "descriptor": "La/Payload;", "note": "the dropper"}], radius=2)
+    r = _call(s, "pack.nearest", path=b["path"], input_index=0,
+              descriptors=["La/Shared;", "La/OnlyApk;", "La/Nope;"], radius=128)
+    assert r["radius"] == 128 and r["pack_id"] == "pack"
+    by = {x["descriptor"]: x for x in r["results"]}
+    assert by["La/Nope;"] == {"descriptor": "La/Nope;", "entry_id": None, "missing": True}
+    for d in ("La/Shared;", "La/OnlyApk;"):
+        x = by[d]
+        assert x["missing"] is False and x["entry_id"] == 0 and x["entry_fqcn"] == "a.Payload"
+        assert x["tier"] == 2 and 0 < x["distance"] <= 128 and x["note"] == "the dropper"
+        assert x["strings"] == [] and x["instructions"] > 0
+    # at radius 0 (and no shared strings) nothing is near
+    r0 = _call(s, "pack.nearest", path=b["path"], input_index=0, descriptors=["La/Shared;"], radius=0)
+    assert r0["results"][0]["entry_id"] is None and r0["results"][0]["missing"] is False
+    # default radius is the module constant
+    assert _call(s, "pack.nearest", path=b["path"], input_index=0, descriptors=[])["radius"] == serve.NEAREST_RADIUS
+    # errors are requests, not crashes
+    bad = serve.dispatch(s, {"v": 1, "id": 1, "op": "pack.nearest",
+                             "params": {"path": str(tmp_path / "missing.tflp"), "input_index": 0, "descriptors": []}})
+    assert not bad["ok"] and bad["error"]["code"] == "unreadable"
 
 
 def test_pack_build_needs_loaded_classes(tmp_path, inputs):

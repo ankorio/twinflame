@@ -257,7 +257,11 @@ twinflame serve --cache-dir ~/.cache/twinflame/tfr   # optional: reuse prepared 
 
 Ops: `hello`, `load`, `status`, `where`, `describe`, `pack.build` (a curated family pack from
 hand-picked classes), `pack.match` (containment of packs in every loaded input, with per-entry
-hits), `pack.list`, `shutdown`. Each input file is loaded on its own and addressed as
+hits — each hit carries its tier, distance, the detector's evidence `score` and the distinctive
+`strings` the two classes share, so a host can weigh and explain a string-only hit),
+`pack.nearest` (the closest entry of one pack for a list of classes at a wide radius — the
+neighbourhood of a hit, including classes the pack's own radius rejects), `pack.list`,
+`shutdown`. Each input file is loaded on its own and addressed as
 `(input_index, descriptor)`, so a class present in an APK *and* in a dumped `.dex` stays two
 classes and a hit says which file it came from. Errors come back as `{"ok": false, "error":
 {"code", "message"}}` and never end the session; the full protocol is documented in
