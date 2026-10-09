@@ -59,6 +59,54 @@ _LIBSIGS_HINT = (
 NEAREST_RADIUS = 32
 
 
+def _iso_utc_from_mtime(path: Path) -> str:
+    from datetime import datetime, timezone
+    dt = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc)
+    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _describe_sidecar(pack: Path) -> dict:
+    """`hello`'s `libsigs` summary read from the pack's `.idx.json` sidecar
+    only — the fallback for a twinflame_libsigs without `pack.describe_pack`
+    (< 0.2.0b2). Same keys as that helper; never loads the pack body."""
+    from twinflame_libsigs.pack import sidecar_path
+    pack = Path(pack)
+    sc = sidecar_path(pack)
+    doc = json.loads(sc.read_text())
+    meta = doc.get("meta", {}) or {}
+    coords = meta.get("coords")
+    built, built_from = meta.get("built"), "meta"
+    if not built:
+        built, built_from = _iso_utc_from_mtime(pack if pack.exists() else sc), "mtime"
+    size = sc.stat().st_size + (pack.stat().st_size if pack.exists() else 0)
+    return {
+        "path": str(pack.resolve()),
+        "sidecar": str(sc.resolve()),
+        "n_entries": doc.get("n_entries"),
+        "coords": len(coords) if isinstance(coords, (list, tuple)) else coords,
+        "versions": meta.get("versions"),
+        "classes_seen": meta.get("classes_seen"),
+        "min_instr": meta.get("min_instr"),
+        "built": built,
+        "built_from": built_from,
+        "size_bytes": size,
+    }
+
+
+def _describe_libsigs_pack(pack: Path) -> Optional[dict]:
+    """`twinflame_libsigs.pack.describe_pack` when available, else the local
+    sidecar reader; None when the sidecar is missing or unreadable (the pack
+    path itself is still reported through `libsigs_pack`)."""
+    try:
+        from twinflame_libsigs.pack import describe_pack
+    except ImportError:
+        describe_pack = _describe_sidecar
+    try:
+        return describe_pack(pack)
+    except (OSError, ValueError):
+        return None
+
+
 class ServeError(Exception):
     """A request-level failure: reported to the caller, never fatal."""
 
@@ -281,6 +329,13 @@ class Session:
     # -- ops -------------------------------------------------------------------
 
     def op_hello(self, params: dict) -> dict:
+        """Versions and capabilities. `libsigs_pack` is the resolved library
+        dictionary path (or None); `libsigs` summarises that pack from its
+        sidecar (`twinflame_libsigs.pack.describe_pack`: n_entries, coords,
+        versions, classes_seen, min_instr, built, built_from, size_bytes) so
+        a host can show where the dictionary lives and when it was built
+        without loading it. `native_mih` says whether the `tfls_mih` wheel
+        backs the dictionary store."""
         from . import __version__
         from .signature import _native as native_sig
         try:
@@ -290,6 +345,7 @@ class Session:
         except ImportError:
             native_mih, libsigs_version = False, None
         pack, _ = self._libsigs() if libsigs_version else (None, None)
+        libsigs = _describe_libsigs_pack(pack) if pack else None
         return {
             "protocol": PROTOCOL_VERSION,
             "twinflame": __version__,
@@ -299,6 +355,7 @@ class Session:
             "native_signature": native_sig is not None,
             "native_mih": bool(native_mih),
             "libsigs_pack": str(pack) if pack else None,
+            "libsigs": libsigs,
             "python": sys.version.split()[0],
             "cache_dir": str(self.cache_dir) if self.cache_dir else None,
         }

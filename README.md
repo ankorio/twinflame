@@ -48,6 +48,24 @@ That's everything for the core tool. Two features need external programs that ar
 packages: `--normalize` needs **Redex** on `PATH` (optional; only for junk-instruction
 normalization), and applying a recovered `mapping.txt` needs your own decompiler (e.g. **JADX**).
 
+### Optional: native library-dictionary store (`twinflame[native]`)
+
+The library dictionary (a `twinflame_libsigs` pack — by default
+`~/.cache/twinflame/libsigs.tflp`, or the path in `$TWINFLAME_LIBSIGS` / `--libsigs`) is
+queried through a multi-index Hamming store. The `native` extra installs the prebuilt
+`tfls-mih` manylinux wheel for it:
+
+```sh
+pip install --pre "twinflame[native]"
+```
+
+Without it twinflame uses a pure-Python brute-force store that gives identical results but is
+10-100x slower on the ~50k-entry library pack — fine for a one-off run, noticeable in a plugin
+session that labels every class of a large dump. `twinflame serve`'s `hello` reports which store
+is active (`native_mih`) and summarises the pack it found (`libsigs`: entries, coordinates,
+build date, size). The pack itself is rebuilt offline with `twinflame-libsigs scrape` +
+`build` and copied to the path above; see the `twinflame_libsigs` README.
+
 ### Optional: native SimHash accelerator (build it yourself)
 
 The PyPI wheel is pure Python and works on its own. For ~8× faster fingerprinting (`prepare`,
